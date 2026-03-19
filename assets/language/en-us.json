@@ -1,0 +1,13 @@
+{
+    "appTitle": "PPT Maintenance System v2.0",
+    "txtAppDescShort": "Sign in to continue",
+    "txtAppDescLong": "Monitor work orders, track maintenance progress, and access your operations dashboard in one place.",
+    "lblLogin": "Login",
+    "lblUsername": "Username",
+    "lblPassword": "Password",
+    "lblLanguage": "Language",
+    "lblHome": "Home",
+    "lblWelcome": "Welcome",
+    "lblLogout": "Logout",
+    "txtChangeLanguage": "Change Language"
+}

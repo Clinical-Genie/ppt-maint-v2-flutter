@@ -1,0 +1,13 @@
+{
+    "appTitle": "PPT 維修系統 v2.0",
+    "txtAppDescShort": "登入以繼續",
+    "txtAppDescLong": "在一個地方監控工單，跟踪維修進度，並訪問您的操作儀表板。",
+    "lblLogin": "登入",
+    "lblUsername": "使用者名稱",
+    "lblPassword": "密碼",
+    "lblLanguage": "語言",
+    "lblHome": "主頁",
+    "lblWelcome": "歡迎",
+    "lblLogout": "登出",
+    "txtChangeLanguage": "更改語言"
+}
