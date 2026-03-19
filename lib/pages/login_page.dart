@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:maintapp/api/api_controller.dart';
 import 'package:maintapp/language/mlang.dart';
+import 'package:maintapp/model/user_info.dart';
+import 'package:maintapp/state/app_state.dart';
 import 'package:maintapp/state/login_session_controller.dart';
 
 /// A simple login page that only supports username + password authentication.
@@ -21,6 +23,35 @@ class _LoginPageState extends State<LoginPage> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
+
+  bool _isEngineer(UserInfo user) {
+    return user.roles.any((role) => role.toUpperCase() == 'ENGINEER');
+  }
+
+  Future<void> _loadUsersAfterLogin() async {
+    final List<UserInfo> allUsers = await ApiController.listUsers(
+      role: 'ENGINEER',
+      limit: 100,
+      offset: 0,
+      includeInactive: true,
+    ).then((list) => list.items);
+
+    List<UserInfo> activeEngineers = await ApiController.listUsers(
+      role: 'ENGINEER',
+      limit: 100,
+      offset: 0,
+      includeInactive: false,
+    ).then((list) => list.items);
+
+    if (activeEngineers.isEmpty) {
+      activeEngineers = allUsers.where(_isEngineer).toList();
+    }
+
+    AppState.instance.setUsers(
+      activeEngineers: activeEngineers,
+      allUsers: allUsers,
+    );
+  }
 
   @override
   void dispose() {
@@ -44,6 +75,14 @@ class _LoginPageState extends State<LoginPage> {
     // In a real app, replace this with real server-side authentication.
 
     if (LoginSessionController.instance.isLoggedIn()) {
+      try {
+        AppState.instance.setInstitutions(
+          await ApiController.listInstitutions(),
+        );
+        try {
+          await _loadUsersAfterLogin();
+        } catch (_) {}
+      } catch (_) {}
       log("login success, navigate to dashboard.");
       LoginSessionController.instance.debugCheckLoginInfo(
         condition: "After Login",
@@ -259,7 +298,7 @@ class _LoginPageState extends State<LoginPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               _buildBrandHeader(),
-              const SizedBox(height: 28),
+              const SizedBox(height: 10),
               _buildLoginCard(),
             ],
           ),
@@ -324,6 +363,7 @@ class _LoginPageState extends State<LoginPage> {
                   child: _buildIntroPanel(
                     titleFontSize: 42,
                     descriptionFontSize: 20,
+                    serverTargetFontSize: 14,
                   ),
                 ),
               ),
@@ -348,28 +388,37 @@ class _LoginPageState extends State<LoginPage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const CircleAvatar(
-          radius: 44,
-          backgroundColor: Colors.white24,
-          child: Icon(Icons.build, size: 44, color: Colors.white),
+        Image.asset(
+          'assets/images/app/app_icon.png',
+          height: 150,
+          width: 150,
+          fit: BoxFit.contain,
         ),
-        const SizedBox(height: 18),
-        Text(
-          MLang.text('appTitle', 'Maintenance System'),
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 22,
-            fontWeight: FontWeight.w600,
+        SizedBox(
+          height: 60,
+          child: Image.asset(
+            'assets/images/app/app_name.png',
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) {
+              return Text(
+                MLang.text('appTitle', 'Maintenance System'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w600,
+                ),
+              );
+            },
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 30),
         Text(
           MLang.text(
             "txtAppDescLong",
             "Monitor work orders, track maintenance progress, and access your operations dashboard in one place.",
           ),
-          textAlign: TextAlign.center,
+          textAlign: TextAlign.left,
           style: TextStyle(color: Colors.white70),
         ),
         const SizedBox(height: 10),
@@ -386,27 +435,40 @@ class _LoginPageState extends State<LoginPage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const CircleAvatar(
-          radius: 44,
-          backgroundColor: Colors.white24,
-          child: Icon(Icons.build, size: 44, color: Colors.white),
+        Image.asset(
+          'assets/images/app/app_icon.png',
+          height: 150,
+          width: 150,
+          fit: BoxFit.contain,
         ),
-        const SizedBox(height: 18),
-        Text(
-          MLang.text('appTitle', 'Maintenance System'),
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 22,
-            fontWeight: FontWeight.w600,
+        Transform.translate(
+          offset: const Offset(0, -15),
+          child: SizedBox(
+            height: 60,
+            child: Image.asset(
+              'assets/images/app/app_name.png',
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) {
+                return Text(
+                  MLang.text('appTitle', 'Maintenance System'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                  ),
+                );
+              },
+            ),
           ),
         ),
-        const SizedBox(height: 6),
-        const Text(
-          'Sign in to continue',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white70),
-        ),
+
+        // const SizedBox(height: 0),
+        // const Text(
+        //   'Sign in to continue',
+        //   textAlign: TextAlign.center,
+        //   style: TextStyle(color: Colors.white70),
+        // ),
         const SizedBox(height: 10),
         Text(
           _serverSummary(),
@@ -428,39 +490,47 @@ class _LoginPageState extends State<LoginPage> {
   Widget _buildIntroPanel({
     required double titleFontSize,
     required double descriptionFontSize,
+    required double serverTargetFontSize,
   }) {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
-          spacing: 30,
+          spacing: 10,
           children: [
-            Container(
-              width: 88,
-              height: 88,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.14),
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
-              ),
-              child: const Icon(Icons.build, size: 42, color: Colors.white),
+            Image.asset(
+              'assets/images/app/app_icon.png',
+              width: 140,
+              height: 140,
+              fit: BoxFit.contain,
             ),
-            // const SizedBox(height: 28),
             Expanded(
-              child: Text(
-                MLang.text('appTitle', 'Maintenance System'),
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: titleFontSize,
-                  fontWeight: FontWeight.w700,
-                  height: 1.15,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: SizedBox(
+                  height: 100,
+                  child: Image.asset(
+                    'assets/images/app/app_name.png',
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Text(
+                        MLang.text('appTitle', 'Maintenance System'),
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: titleFontSize,
+                          fontWeight: FontWeight.w700,
+                          height: 1.15,
+                        ),
+                      );
+                    },
+                  ),
                 ),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 16),
+        // const SizedBox(height: 16),
         Text(
           MLang.text(
             "txtAppDescLong",
@@ -476,7 +546,10 @@ class _LoginPageState extends State<LoginPage> {
         Text(
           _serverSummary(),
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.white70, fontSize: 16),
+          style: TextStyle(
+            color: Colors.white70,
+            fontSize: serverTargetFontSize,
+          ),
         ),
       ],
     );

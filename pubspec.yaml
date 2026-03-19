@@ -43,6 +43,8 @@ dependencies:
   http_parser: ^4.1.2
   flutter_secure_storage: ^10.0.0
   file_picker: ^8.3.7
+  syncfusion_flutter_pdfviewer: ^33.1.44
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:
@@ -67,6 +69,8 @@ flutter:
 
   assets:
     - assets/images/login_page/login_bg.jpeg
+    - assets/images/app/app_icon.png
+    - assets/images/app/app_name.png
     - assets/language/en-us.json
     - assets/language/zh-hk.json
 

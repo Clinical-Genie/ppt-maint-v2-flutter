@@ -406,6 +406,8 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget build(BuildContext context) {
     final session = LoginSessionController.instance;
     final user = session.userInfo;
+    final bool hasEngineerRole = user.roles.contains('ENGINEER');
+    final bool canEditSignature = hasEngineerRole;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F7FB),
@@ -492,18 +494,19 @@ class _ProfilePageState extends State<ProfilePage> {
                         // ),
                       ],
                     ),
-                    _InfoCard(
-                      title: 'Signature',
-                      width: 460,
-                      children: [
-                        _SignaturePreview(
-                          user: user,
-                          isUploading: _isUploadingSignature,
-                          cacheBustKey: _signatureVersion,
-                          onEdit: _openSignatureDialog,
-                        ),
-                      ],
-                    ),
+                    if (canEditSignature)
+                      _InfoCard(
+                        title: 'Signature',
+                        width: 460,
+                        children: [
+                          _SignaturePreview(
+                            user: user,
+                            isUploading: _isUploadingSignature,
+                            cacheBustKey: _signatureVersion,
+                            onEdit: _openSignatureDialog,
+                          ),
+                        ],
+                      ),
                     _InfoCard(
                       title: 'Security',
                       width: 460,

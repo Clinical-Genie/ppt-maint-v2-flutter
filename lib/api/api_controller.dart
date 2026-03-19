@@ -2,10 +2,12 @@ import 'dart:convert';
 import 'dart:developer';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:maintapp/common/device_info_controller.dart';
 import 'package:maintapp/common/secure_storage.dart';
+import 'package:maintapp/main.dart';
 import 'package:maintapp/model/login_info.dart';
 import 'package:maintapp/model/user_info.dart';
 import 'package:maintapp/model/session.dart';
@@ -165,6 +167,7 @@ class ApiPaths {
   static const String adminEmailLogs = '/api/admin/email-logs';
   static String adminEmailLogById(String logId) =>
       '/api/admin/email-logs/$logId';
+  static const String institutions = '/api/institutions';
   static const String adminPing = '/api/admin/ping';
   static const String runHousekeeping = '/api/ops/housekeeping/run';
 }
@@ -574,10 +577,74 @@ class ApiController {
       successStatusCodes: const [201],
     );
 
+    final errorMessage = _extractApiErrorMessage(result);
+    if (errorMessage.isNotEmpty) {
+      throw Exception(errorMessage);
+    }
     if (result.isEmpty) {
-      return WorkOrder();
+      throw Exception('Create work order failed.');
     }
     return WorkOrder.fromJson(_extractCreateWorkOrderPayload(result));
+  }
+
+  static String _extractApiErrorMessage(dynamic payload) {
+    if (payload == null) return '';
+    if (payload is String) {
+      final value = payload.trim();
+      return value;
+    }
+    if (payload is List) {
+      final messages = payload
+          .map(_extractApiErrorMessage)
+          .where((message) => message.isNotEmpty)
+          .toList();
+      return messages.join('\n');
+    }
+    if (payload is Map) {
+      final map = Map<String, dynamic>.from(payload);
+
+      final directKeys = ['message', 'error', 'detail', 'details', 'title'];
+      for (final key in directKeys) {
+        final message = _extractApiErrorMessage(map[key]);
+        if (message.isNotEmpty) {
+          return message;
+        }
+      }
+
+      final issues = map['issues'];
+      if (issues is List && issues.isNotEmpty) {
+        final messages = issues
+            .map((issue) {
+              if (issue is Map) {
+                final issueMap = Map<String, dynamic>.from(issue);
+                final path = issueMap['path'] is List
+                    ? (issueMap['path'] as List)
+                          .where((part) => part != null)
+                          .map((part) => '$part')
+                          .join('.')
+                    : '';
+                final message = '${issueMap['message'] ?? ''}'.trim();
+                if (path.isNotEmpty && message.isNotEmpty) {
+                  return '$path: $message';
+                }
+                return message;
+              }
+              return _extractApiErrorMessage(issue);
+            })
+            .where((message) => message.isNotEmpty)
+            .toList();
+        if (messages.isNotEmpty) {
+          return messages.join('\n');
+        }
+      }
+
+      final dataMessage = _extractApiErrorMessage(map['data']);
+      if (dataMessage.isNotEmpty) {
+        return dataMessage;
+      }
+    }
+
+    return '';
   }
 
   static String Function(Map<String, dynamic>, List<String>) extractString =
@@ -872,6 +939,40 @@ class ApiController {
     );
 
     return WorkOrderList.fromJson(result);
+  }
+
+  static Future<List<InstitutionOption>> listInstitutions() async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'listInstitutions',
+      subPath: ApiPaths.institutions,
+      method: 'get',
+      postParameters: const {},
+    );
+
+    dynamic rawItems =
+        result['items'] ??
+        result['rows'] ??
+        result['institutions'] ??
+        result['data'];
+    if (rawItems is Map<dynamic, dynamic>) {
+      rawItems =
+          rawItems['items'] ?? rawItems['rows'] ?? rawItems['institutions'];
+    }
+
+    if (rawItems is! List) {
+      return [];
+    }
+
+    final output = <InstitutionOption>[];
+    for (final item in rawItems) {
+      if (item is Map<dynamic, dynamic>) {
+        final institution = InstitutionOption.fromJson(item);
+        if (institution.code.isNotEmpty) {
+          output.add(institution);
+        }
+      }
+    }
+    return output;
   }
 
   static Future<WorkOrder> getWorkOrderById(String workOrderId) async {
@@ -1380,7 +1481,7 @@ class ApiController {
           output = Map<String, dynamic>.from(data);
         },
         (data) {
-          log('$apiNameForLog API call failed ${data['message'] ?? ''}');
+          log('$apiNameForLog API call failed ${_extractApiErrorMessage(data)}');
           output = Map<String, dynamic>.from(data);
         },
         requireLogin: requireLogin,
@@ -1413,12 +1514,15 @@ class ApiController {
         postParameters,
         method,
         (data) {
-          log('${data['message'] ?? 'No message in response'}');
-          output = '${data['message'] ?? fallbackMessage}'.trim();
+          final message = _extractApiErrorMessage(data);
+          log(message.isEmpty ? 'No message in response' : message);
+          output = (message.isNotEmpty ? message : fallbackMessage).trim();
         },
         (data) {
-          log('$apiNameForLog API call failed ${data['message'] ?? ''}');
-          output = 'Failed. ${data['message'] ?? fallbackMessage}'.trim();
+          final message = _extractApiErrorMessage(data);
+          log('$apiNameForLog API call failed $message');
+          output = 'Failed. ${message.isNotEmpty ? message : fallbackMessage}'
+              .trim();
         },
         requireLogin: requireLogin,
         successStatusCodes: successStatusCodes,
@@ -1433,6 +1537,8 @@ class ApiController {
 }
 
 class ApiAction {
+  static bool _sessionExpiredDialogShowing = false;
+
   static Map<String, String> _buildHeaders({
     Map<String, String>? customHeaders,
     required bool requireLogin,
@@ -1902,7 +2008,79 @@ class ApiAction {
     //         AppState.instance.apiResult.reason));
     log("API call failed: $apiNameForLog, reason: $reason");
 
-    //Show popup dialog
+    if (_isSessionExpiredFailure(reason)) {
+      _showSessionExpiredDialog(reason);
+    }
+  }
+
+  static bool _isSessionExpiredFailure(String reason) {
+    final value = reason.toLowerCase();
+    if (value.isEmpty) {
+      return false;
+    }
+
+    const sessionKeywords = [
+      'token revoked',
+      'refresh token revoked',
+      'access token revoked',
+      'token expired',
+      'refresh token expired',
+      'access token expired',
+      'jwt expired',
+      'unauthorized',
+      'invalid token',
+      'invalid refresh token',
+      'session expired',
+      'login expired',
+      'not login yet',
+      'not logged in',
+      'forbidden',
+      '401',
+      '403',
+    ];
+
+    return sessionKeywords.any(value.contains);
+  }
+
+  static void _showSessionExpiredDialog(String reason) {
+    if (_sessionExpiredDialogShowing) {
+      return;
+    }
+
+    final navigator = MyApp.navigatorKey.currentState;
+    final context = MyApp.navigatorKey.currentContext;
+    if (navigator == null || context == null) {
+      return;
+    }
+
+    _sessionExpiredDialogShowing = true;
+    LoginSessionController.instance.logoutLocally(resetLoginInfo: true);
+
+    final message = ApiController._extractApiErrorMessage(reason).isNotEmpty
+        ? ApiController._extractApiErrorMessage(reason)
+        : 'Your login session has expired. Please sign in again.';
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Login Required'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                navigator.pushNamedAndRemoveUntil('/login', (route) => false);
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    ).whenComplete(() {
+      _sessionExpiredDialogShowing = false;
+    });
   }
 }
 

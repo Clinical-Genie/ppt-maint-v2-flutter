@@ -1,11 +1,11 @@
 {
-    "name": "maintapp",
-    "short_name": "maintapp",
+    "name": "PPT Maintenance System",
+    "short_name": "PPT Maint",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "PPT Maintenance System",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

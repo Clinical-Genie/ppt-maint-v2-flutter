@@ -1,8 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="maintapp"
+        android:label="PPT Maint"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ppt_main_icon">
         <activity
             android:name=".MainActivity"
             android:exported="true"

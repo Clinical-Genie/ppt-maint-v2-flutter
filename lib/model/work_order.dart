@@ -274,6 +274,8 @@ class WorkOrderOcrResult {
   String sourceFileName = '';
   String sourceFileUrl = '';
   String ocrJobId = '';
+  String extractionMode = '';
+  String extractionLabel = '';
   WorkOrder workOrderDraft = WorkOrder();
   Map<String, dynamic> ocrFields = {};
   String message = '';
@@ -300,6 +302,16 @@ class WorkOrderOcrResult {
       DataHelper.getStringSafely(json, 'ha_request_pdf_url', ''),
     );
     ocrJobId = DataHelper.getStringSafely(json, 'ocr_job_id', '');
+    extractionMode = DataHelper.getStringSafely(
+      json,
+      'extraction_mode',
+      DataHelper.getStringSafely(json, 'extract_mode', ''),
+    );
+    extractionLabel = DataHelper.getStringSafely(
+      json,
+      'extraction_label',
+      DataHelper.getStringSafely(json, 'extract_label', ''),
+    );
     message = DataHelper.getStringSafely(json, 'message', '');
     rawOcrText = DataHelper.getStringSafely(json, 'raw_text', '');
 
@@ -330,6 +342,8 @@ class WorkOrderOcrResult {
       'source_file_name': sourceFileName,
       'source_file_url': sourceFileUrl,
       'ocr_job_id': ocrJobId,
+      'extraction_mode': extractionMode,
+      'extraction_label': extractionLabel,
       'work_order_draft': workOrderDraft.toJson(),
       'ocr_fields': ocrFields,
       'confidence': confidence,
