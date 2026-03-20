@@ -23,6 +23,8 @@ class AppDrawer extends StatelessWidget {
     final bool hasProfileAccess = true;
     final bool hasWorkOrderAccess = hasManagerRole || hasEngineerRole;
     final bool hasCreateWorkOrderAccess = hasManagerRole;
+    final bool hasEmailBatchAccess = hasManagerRole || hasAdminRole;
+    final bool hasTransferRequestAccess = hasEngineerRole;
     final bool hasLogoutAccess = true;
 
     return Drawer(
@@ -107,6 +109,24 @@ class AppDrawer extends StatelessWidget {
                 onTap: () async {
                   Navigator.of(context).pop();
                   Navigator.of(context).pushNamed('/create-work-order');
+                },
+              ),
+            if (hasEmailBatchAccess)
+              ListTile(
+                leading: const Icon(Icons.outgoing_mail),
+                title: const Text('Email Batches'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).pushReplacementNamed('/email-batches');
+                },
+              ),
+            if (hasTransferRequestAccess)
+              ListTile(
+                leading: const Icon(Icons.swap_horiz_outlined),
+                title: const Text('Transfer Requests'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).pushReplacementNamed('/transfer-requests');
                 },
               ),
             if (hasUserManagementAccess)

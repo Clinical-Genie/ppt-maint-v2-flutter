@@ -11,7 +11,18 @@ import 'package:maintapp/main.dart';
 import 'package:maintapp/model/login_info.dart';
 import 'package:maintapp/model/user_info.dart';
 import 'package:maintapp/model/session.dart';
+import 'package:maintapp/model/admin_email_log.dart';
+import 'package:maintapp/model/admin_result.dart';
+import 'package:maintapp/model/api_result.dart';
+import 'package:maintapp/model/email_batch.dart';
+import 'package:maintapp/model/user_status_result.dart';
+import 'package:maintapp/model/user_visit.dart';
+import 'package:maintapp/model/work_order_history.dart';
+import 'package:maintapp/model/work_order_form.dart';
+import 'package:maintapp/model/work_order_attachment.dart';
 import 'package:maintapp/model/work_order.dart';
+import 'package:maintapp/model/work_order_source_file.dart';
+import 'package:maintapp/model/transfer_request.dart';
 import 'package:maintapp/state/app_state.dart';
 import 'package:maintapp/state/login_session_controller.dart';
 
@@ -22,7 +33,7 @@ class Server {
   bool useWebProxy;
 
   Server({
-    this.host = '192.168.50.187',
+    this.host = 'localhost',
     this.port = 3500,
     this.useHttps = false,
     this.useWebProxy = false,
@@ -123,6 +134,20 @@ class ApiPaths {
   static const String workOrders = '/api/work-orders';
   static String workOrderById(String workOrderId) =>
       '/api/work-orders/$workOrderId';
+  static String workOrderAttachments(String workOrderId) =>
+      '/api/work-orders/$workOrderId/attachments';
+  static String createTransferRequest(String workOrderId) =>
+      '/api/work-orders/$workOrderId/transfer-requests';
+  static const String incomingTransferRequests =
+      '/api/work-orders/transfer-requests/incoming';
+  static const String outgoingTransferRequests =
+      '/api/work-orders/transfer-requests/outgoing';
+  static String acceptTransferRequest(String requestId) =>
+      '/api/work-orders/transfer-requests/$requestId/accept';
+  static String rejectTransferRequest(String requestId) =>
+      '/api/work-orders/transfer-requests/$requestId/reject';
+  static String cancelTransferRequest(String requestId) =>
+      '/api/work-orders/transfer-requests/$requestId/cancel';
   static String assignWorkOrder(String workOrderId) =>
       '/api/work-orders/$workOrderId/assign';
   static String cancelWorkOrder(String workOrderId) =>
@@ -133,6 +158,8 @@ class ApiPaths {
       '/api/work-orders/$workOrderId/completed';
   static String workOrderEmails(String workOrderId) =>
       '/api/work-orders/$workOrderId/emails';
+  static String workOrderHistory(String workOrderId) =>
+      '/api/work-orders/$workOrderId/history';
   static String editWorkOrderForm(String workOrderId) =>
       '/api/work-orders/$workOrderId/form/admin-edit';
   static String remarkWorkOrderForm(String workOrderId) =>
@@ -164,6 +191,10 @@ class ApiPaths {
       '/api/work-orders/$workOrderId/start-work';
   static const String emailBatches = '/api/email-batches';
   static String emailBatchById(String batchId) => '/api/email-batches/$batchId';
+  static String sendEmailBatch(String batchId) =>
+      '/api/email-batches/$batchId/send';
+  static String emailBatchItem(String batchId, String workOrderId) =>
+      '/api/email-batches/$batchId/items/$workOrderId';
   static const String adminEmailLogs = '/api/admin/email-logs';
   static String adminEmailLogById(String logId) =>
       '/api/admin/email-logs/$logId';
@@ -186,14 +217,15 @@ class ApiController {
     return '${ApiPaths.server.base}$normalizedPath';
   }
 
-  static Future<Map<String, dynamic>> healthCheck() async {
-    return _callJsonMap(
+  static Future<ApiMessageResult> healthCheck() async {
+    final result = await _callJsonMap(
       apiNameForLog: 'healthCheck',
       subPath: ApiPaths.health,
       method: 'get',
       postParameters: const {},
       requireLogin: false,
     );
+    return ApiMessageResult.fromJson(result);
   }
 
   static Future<LoginInfo> userLogin(String username, String password) async {
@@ -442,13 +474,13 @@ class ApiController {
     return output;
   }
 
-  static Future<Map<String, dynamic>> adminResetUserPassword(
+  static Future<AdminResetPasswordResult> adminResetUserPassword(
     String userId, {
     String? newPassword,
     bool generate = false,
     bool revokeSessions = false,
   }) async {
-    return _callJsonMap(
+    final result = await _callJsonMap(
       apiNameForLog: 'adminResetUserPassword',
       subPath: ApiPaths.resetUserPassword(userId),
       method: 'post',
@@ -459,6 +491,7 @@ class ApiController {
         'revoke_sessions': revokeSessions,
       },
     );
+    return AdminResetPasswordResult.fromJson(result);
   }
 
   static Future<String> uploadMySignature(
@@ -495,16 +528,17 @@ class ApiController {
     return output;
   }
 
-  static Future<Map<String, dynamic>> updateUserStatus(
+  static Future<UserStatusUpdateResult> updateUserStatus(
     String userId,
     bool isActive,
   ) async {
-    return _callJsonMap(
+    final result = await _callJsonMap(
       apiNameForLog: 'updateUserStatus',
       subPath: ApiPaths.userStatus(userId),
       method: 'patch',
       postParameters: {'is_active': isActive},
     );
+    return UserStatusUpdateResult.fromJson(result);
   }
 
   static Future<RoleList> getAvailableRoles() async {
@@ -543,7 +577,7 @@ class ApiController {
     return [];
   }
 
-  static Future<Map<String, dynamic>> getUserVisits(
+  static Future<UserVisitList> getUserVisits(
     String userId, {
     String? institutionCode,
     String? from,
@@ -551,7 +585,7 @@ class ApiController {
     int? limit,
     int? offset,
   }) async {
-    return _callJsonMap(
+    final result = await _callJsonMap(
       apiNameForLog: 'getUserVisits',
       subPath: ApiPaths.userVisits(userId),
       method: 'get',
@@ -565,6 +599,7 @@ class ApiController {
         if (offset != null) 'offset': offset,
       },
     );
+    return UserVisitList.fromJson(result);
   }
 
   static Future<WorkOrder> createWorkOrder(dynamic payload) async {
@@ -762,7 +797,6 @@ class ApiController {
     final String resolvedSourceFileUrl = extractString(source, [
       'source_file_url',
       'sourceFileUrl',
-      'ha_request_pdf_url',
     ]);
     final String resolvedOcrJobId = extractString(source, [
       'ocr_job_id',
@@ -992,17 +1026,152 @@ class ApiController {
     return WorkOrder.fromJson(result);
   }
 
-  static Future<Map<String, dynamic>> assignWorkOrder(
+  static Future<WorkOrder> updateWorkOrder(
+    String workOrderId,
+    Map<String, dynamic> payload,
+  ) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'updateWorkOrder',
+      subPath: ApiPaths.workOrderById(workOrderId),
+      method: 'patch',
+      postParameters: payload,
+    );
+
+    final errorMessage = _extractApiErrorMessage(result);
+    if (errorMessage.isNotEmpty) {
+      throw Exception(errorMessage);
+    }
+    if (result.isEmpty) {
+      throw Exception('Update work order failed.');
+    }
+    final root = result['data'];
+    if (root is Map) {
+      return WorkOrder.fromJson(Map<String, dynamic>.from(root));
+    }
+    return WorkOrder.fromJson(result);
+  }
+
+  static Future<WorkOrderAttachmentList> getWorkOrderAttachments(
+    String workOrderId,
+  ) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'getWorkOrderAttachments',
+      subPath: ApiPaths.workOrderAttachments(workOrderId),
+      method: 'get',
+      postParameters: const {},
+    );
+    return WorkOrderAttachmentList.fromJson(result);
+  }
+
+  static Future<TransferRequest> createTransferRequest(
+    String workOrderId, {
+    required String toEngineerId,
+    required String reason,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'createTransferRequest',
+      subPath: ApiPaths.createTransferRequest(workOrderId),
+      method: 'post',
+      postParameters: {'toEngineerId': toEngineerId, 'reason': reason},
+    );
+    return TransferRequest.fromJson(result);
+  }
+
+  static Future<TransferRequestListResponse> listIncomingTransferRequests({
+    String? status,
+    int? limit,
+    int? offset,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'listIncomingTransferRequests',
+      subPath: ApiPaths.incomingTransferRequests,
+      method: 'get',
+      postParameters: const {},
+      queryParameters: {
+        if (status != null && status.isNotEmpty) 'status': status,
+        if (limit != null) 'limit': limit,
+        if (offset != null) 'offset': offset,
+      },
+    );
+    return TransferRequestListResponse.fromJson(result);
+  }
+
+  static Future<TransferRequestListResponse> listOutgoingTransferRequests({
+    String? status,
+    int? limit,
+    int? offset,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'listOutgoingTransferRequests',
+      subPath: ApiPaths.outgoingTransferRequests,
+      method: 'get',
+      postParameters: const {},
+      queryParameters: {
+        if (status != null && status.isNotEmpty) 'status': status,
+        if (limit != null) 'limit': limit,
+        if (offset != null) 'offset': offset,
+      },
+    );
+    return TransferRequestListResponse.fromJson(result);
+  }
+
+  static Future<WorkOrderActionResult> acceptTransferRequest(
+    String requestId, {
+    String? reason,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'acceptTransferRequest',
+      subPath: ApiPaths.acceptTransferRequest(requestId),
+      method: 'post',
+      postParameters: {
+        if (reason != null && reason.isNotEmpty) 'reason': reason,
+      },
+    );
+    return WorkOrderActionResult.fromJson(result);
+  }
+
+  static Future<WorkOrderActionResult> rejectTransferRequest(
+    String requestId, {
+    String? reason,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'rejectTransferRequest',
+      subPath: ApiPaths.rejectTransferRequest(requestId),
+      method: 'post',
+      postParameters: {
+        if (reason != null && reason.isNotEmpty) 'reason': reason,
+      },
+    );
+    return WorkOrderActionResult.fromJson(result);
+  }
+
+  static Future<WorkOrderActionResult> cancelTransferRequest(
+    String requestId, {
+    String? reason,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'cancelTransferRequest',
+      subPath: ApiPaths.cancelTransferRequest(requestId),
+      method: 'post',
+      postParameters: {
+        if (reason != null && reason.isNotEmpty) 'reason': reason,
+      },
+    );
+    return WorkOrderActionResult.fromJson(result);
+  }
+
+  static Future<WorkOrderActionResult> assignWorkOrder(
     String workOrderId, {
     required String targetUserId,
     required String reason,
   }) async {
-    return _callJsonMap(
+    final result = await _callJsonMap(
       apiNameForLog: 'assignWorkOrder',
       subPath: ApiPaths.assignWorkOrder(workOrderId),
       method: 'post',
       postParameters: {'targetUserId': targetUserId, 'reason': reason},
     );
+    return WorkOrderActionResult.fromJson(result);
   }
 
   static Future<String> cancelWorkOrder(
@@ -1031,17 +1200,18 @@ class ApiController {
     );
   }
 
-  static Future<Map<String, dynamic>> completeWorkOrder(
+  static Future<WorkOrderActionResult> completeWorkOrder(
     String workOrderId,
     String summary,
   ) async {
-    return _callJsonMap(
+    final result = await _callJsonMap(
       apiNameForLog: 'completeWorkOrder',
       subPath: ApiPaths.completeWorkOrder(workOrderId),
       method: 'post',
       postParameters: {'summary': summary},
       successStatusCodes: const [200, 410],
     );
+    return WorkOrderActionResult.fromJson(result);
   }
 
   static Future<String> pickWorkOrder(String workOrderId) async {
@@ -1151,15 +1321,16 @@ class ApiController {
     return WorkOrderOcrResult.fromJson(output);
   }
 
-  static Future<Map<String, dynamic>> getWorkOrderSourceFile(
+  static Future<WorkOrderSourceFile> getWorkOrderSourceFile(
     String fileId,
   ) async {
-    return _callJsonMap(
+    final result = await _callJsonMap(
       apiNameForLog: 'getWorkOrderSourceFile',
       subPath: ApiPaths.workOrderSourceFile(fileId),
       method: 'get',
       postParameters: const {},
     );
+    return WorkOrderSourceFile.fromJson(result);
   }
 
   static String getWorkOrderSourceFileDownloadUrl(String fileId) {
@@ -1179,14 +1350,14 @@ class ApiController {
     );
   }
 
-  static Future<Map<String, dynamic>> createEmailBatch({
+  static Future<EmailBatchCreateResult> createEmailBatch({
     required List<String> workOrderIds,
     required List<String> toEmails,
     String? subject,
     String? bodyHtml,
     String? bodyText,
   }) async {
-    return _callJsonMap(
+    final result = await _callJsonMap(
       apiNameForLog: 'createEmailBatch',
       subPath: ApiPaths.emailBatches,
       method: 'post',
@@ -1199,60 +1370,111 @@ class ApiController {
       },
       successStatusCodes: const [201],
     );
+    return EmailBatchCreateResult.fromJson(result);
   }
 
-  static Future<Map<String, dynamic>> listEmailBatches() async {
-    return _callJsonMap(
+  static Future<EmailBatchListResult> listEmailBatches({
+    String? status,
+    int? limit,
+    int? offset,
+  }) async {
+    final result = await _callJsonMap(
       apiNameForLog: 'listEmailBatches',
       subPath: ApiPaths.emailBatches,
       method: 'get',
       postParameters: const {},
+      queryParameters: {
+        if (status != null && status.trim().isNotEmpty) 'status': status.trim(),
+        if (limit != null) 'limit': limit,
+        if (offset != null) 'offset': offset,
+      },
     );
+    return EmailBatchListResult.fromJson(result);
   }
 
-  static Future<Map<String, dynamic>> getEmailBatchById(String batchId) async {
-    return _callJsonMap(
+  static Future<EmailBatchDetail> getEmailBatchById(String batchId) async {
+    final result = await _callJsonMap(
       apiNameForLog: 'getEmailBatchById',
       subPath: ApiPaths.emailBatchById(batchId),
       method: 'get',
       postParameters: const {},
     );
+    return EmailBatchDetail.fromJson(result);
   }
 
-  static Future<Map<String, dynamic>> getWorkOrderEmailHistory(
+  static Future<EmailBatchSendResult> sendEmailBatch(String batchId) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'sendEmailBatch',
+      subPath: ApiPaths.sendEmailBatch(batchId),
+      method: 'post',
+      postParameters: const {},
+      successStatusCodes: const [200, 201],
+    );
+    return EmailBatchSendResult.fromJson(result);
+  }
+
+  static Future<String> removeEmailBatchItem(
+    String batchId,
     String workOrderId,
   ) async {
-    return _callJsonMap(
+    return _callMessage(
+      apiNameForLog: 'removeEmailBatchItem',
+      subPath: ApiPaths.emailBatchItem(batchId, workOrderId),
+      method: 'delete',
+      postParameters: const {},
+      fallbackMessage: 'Item removed from batch.',
+    );
+  }
+
+  static Future<WorkOrderEmailHistoryResult> getWorkOrderEmailHistory(
+    String workOrderId,
+  ) async {
+    final result = await _callJsonMap(
       apiNameForLog: 'getWorkOrderEmailHistory',
       subPath: ApiPaths.workOrderEmails(workOrderId),
       method: 'get',
       postParameters: const {},
     );
+    return WorkOrderEmailHistoryResult.fromJson(result);
   }
 
-  static Future<Map<String, dynamic>> createWorkOrderForm(
+  static Future<WorkOrderHistoryResponse> getWorkOrderHistory(
+    String workOrderId,
+  ) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'getWorkOrderHistory',
+      subPath: ApiPaths.workOrderHistory(workOrderId),
+      method: 'get',
+      postParameters: const {},
+    );
+    return WorkOrderHistoryResponse.fromJson(result);
+  }
+
+  static Future<WorkOrderForm> createWorkOrderForm(
     String workOrderId,
     String templateId,
   ) async {
-    return _callJsonMap(
+    final result = await _callJsonMap(
       apiNameForLog: 'createWorkOrderForm',
       subPath: ApiPaths.workOrderForm(workOrderId),
       method: 'post',
       postParameters: {'templateId': templateId},
       successStatusCodes: const [201],
     );
+    return WorkOrderForm.fromJson(result);
   }
 
-  static Future<Map<String, dynamic>> saveWorkOrderFormDraft(
+  static Future<WorkOrderForm> saveWorkOrderFormDraft(
     String workOrderId,
     Map<String, dynamic> dataJson,
   ) async {
-    return _callJsonMap(
+    final result = await _callJsonMap(
       apiNameForLog: 'saveWorkOrderFormDraft',
       subPath: ApiPaths.workOrderForm(workOrderId),
       method: 'put',
       postParameters: {'data_json': dataJson},
     );
+    return WorkOrderForm.fromJson(result);
   }
 
   static Future<String> submitWorkOrderForm(
@@ -1344,14 +1566,14 @@ class ApiController {
     );
   }
 
-  static Future<Map<String, dynamic>> listAdminEmailLogs({
+  static Future<AdminEmailLogList> listAdminEmailLogs({
     String? q,
     String? template,
     String? status,
     int? limit,
     int? offset,
   }) async {
-    return _callJsonMap(
+    final result = await _callJsonMap(
       apiNameForLog: 'listAdminEmailLogs',
       subPath: ApiPaths.adminEmailLogs,
       method: 'get',
@@ -1365,33 +1587,37 @@ class ApiController {
         if (offset != null) 'offset': offset,
       },
     );
+    return AdminEmailLogList.fromJson(result);
   }
 
-  static Future<Map<String, dynamic>> getAdminEmailLogById(String logId) async {
-    return _callJsonMap(
+  static Future<AdminEmailLog> getAdminEmailLogById(String logId) async {
+    final result = await _callJsonMap(
       apiNameForLog: 'getAdminEmailLogById',
       subPath: ApiPaths.adminEmailLogById(logId),
       method: 'get',
       postParameters: const {},
     );
+    return AdminEmailLog.fromJson(result);
   }
 
-  static Future<Map<String, dynamic>> adminPing() async {
-    return _callJsonMap(
+  static Future<AdminPingResult> adminPing() async {
+    final result = await _callJsonMap(
       apiNameForLog: 'adminPing',
       subPath: ApiPaths.adminPing,
       method: 'get',
       postParameters: const {},
     );
+    return AdminPingResult.fromJson(result);
   }
 
-  static Future<Map<String, dynamic>> runOpsHousekeeping() async {
-    return _callJsonMap(
+  static Future<HousekeepingRunResult> runOpsHousekeeping() async {
+    final result = await _callJsonMap(
       apiNameForLog: 'runOpsHousekeeping',
       subPath: ApiPaths.runHousekeeping,
       method: 'post',
       postParameters: const {},
     );
+    return HousekeepingRunResult.fromJson(result);
   }
 
   static Future<SessionList> getActiveSessions() async {
@@ -1481,7 +1707,9 @@ class ApiController {
           output = Map<String, dynamic>.from(data);
         },
         (data) {
-          log('$apiNameForLog API call failed ${_extractApiErrorMessage(data)}');
+          log(
+            '$apiNameForLog API call failed ${_extractApiErrorMessage(data)}',
+          );
           output = Map<String, dynamic>.from(data);
         },
         requireLogin: requireLogin,
@@ -1702,7 +1930,8 @@ class ApiAction {
           : null;
 
       log(
-        "Calling API: $method $url with headers: $headers and body: $postParameters, timeout: ${timeLimit?.inSeconds}s",
+        // "Calling API: $method $url with headers: $headers and body: $postParameters, timeout: ${timeLimit?.inSeconds}s",
+        "Calling API: $method $url and body: $postParameters",
       );
 
       switch (method.toLowerCase()) {

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:maintapp/api/api_controller.dart';
+import 'package:maintapp/model/admin_email_log.dart';
+import 'package:maintapp/model/admin_result.dart';
 import 'package:maintapp/model/user_info.dart';
 import 'package:maintapp/model/session.dart';
 import 'package:maintapp/model/work_order.dart';
@@ -16,10 +18,10 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   bool _isLoadingAdmin = false;
   bool _isLoadingReviewer = false;
-  Map<String, dynamic> _adminPing = {};
+  AdminPingResult _adminPing = AdminPingResult();
   SessionList _adminSessions = SessionList();
   Map<String, dynamic> _adminUsers = {};
-  Map<String, dynamic> _adminEmailLogs = {};
+  AdminEmailLogList _adminEmailLogs = AdminEmailLogList();
   WorkOrderList _reviewPendingSignature = WorkOrderList();
   WorkOrderList _reviewSignedEdited = WorkOrderList();
 
@@ -58,13 +60,17 @@ class _DashboardPageState extends State<DashboardPage> {
 
       if (!mounted) return;
       setState(() {
-        _adminPing = Map<String, dynamic>.from(results[0] ?? {});
+        _adminPing = results[0] is AdminPingResult
+            ? results[0] as AdminPingResult
+            : AdminPingResult();
         _adminSessions = results[1] is SessionList
             ? results[1] as SessionList
             : SessionList();
         // _adminUsers = Map<String, dynamic>.from(results[2] ?? {});
         _adminUsers = {};
-        _adminEmailLogs = Map<String, dynamic>.from(results[2] ?? {});
+        _adminEmailLogs = results[2] is AdminEmailLogList
+            ? results[2] as AdminEmailLogList
+            : AdminEmailLogList();
       });
     } finally {
       if (mounted) {
@@ -125,6 +131,12 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     if (payload is SessionList) {
       return payload.items.map((session) => session.toJson()).toList();
+    }
+    if (payload is AdminEmailLogList) {
+      return payload.items.map((log) => log.raw).toList();
+    }
+    if (payload is AdminPingResult) {
+      return [payload.raw];
     }
     if (payload is! Map<dynamic, dynamic>) {
       return <Map<String, dynamic>>[];
@@ -420,7 +432,9 @@ class _DashboardPageState extends State<DashboardPage> {
                         items: [
                           _StatItem(
                             title: 'Admin Ping',
-                            value: _adminPing['ok'] == true ? 'OK' : '-',
+                            value: _adminPing.status.isNotEmpty
+                                ? _adminPing.status.toUpperCase()
+                                : (_adminPing.message.isNotEmpty ? 'OK' : '-'),
                             icon: Icons.monitor_heart_outlined,
                             color: const Color(0xFF0F766E),
                           ),

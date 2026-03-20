@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:maintapp/api/api_controller.dart';
 import 'package:maintapp/common/platform_helper.dart';
 import 'package:maintapp/pages/dashboard_page.dart';
+import 'package:maintapp/pages/email_batch_list_page.dart';
 import 'package:maintapp/pages/login_page.dart';
 import 'package:maintapp/pages/login_sessions_page.dart';
 import 'package:maintapp/pages/profile_page.dart';
 import 'package:maintapp/pages/create_work_order_page.dart';
+import 'package:maintapp/pages/transfer_request_list_page.dart';
 import 'package:maintapp/pages/work_order_list_page.dart';
 import 'package:maintapp/pages/user_management_page.dart';
 import 'package:maintapp/state/login_session_controller.dart';
@@ -53,6 +55,8 @@ class MyApp extends StatelessWidget {
         '/login-sessions': (context) => const LoginSessionsPage(),
         '/create-work-order': (context) => const CreateWorkOrderPage(),
         '/work-orders': (context) => const WorkOrderListPage(),
+        '/email-batches': (context) => const EmailBatchListPage(),
+        '/transfer-requests': (context) => const TransferRequestListPage(),
         '/user-management': (context) => const UserManagementPage(),
       },
       ),

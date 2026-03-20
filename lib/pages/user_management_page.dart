@@ -220,9 +220,9 @@ class _UserManagementPageState extends State<UserManagementPage> {
     if (isSelf) return;
 
     final isActive = user.isActive;
-    final ok = await ApiController.updateUserStatus(user.id, !isActive);
+    final result = await ApiController.updateUserStatus(user.id, !isActive);
     if (!mounted) return;
-    if (ok.isEmpty) {
+    if (result.userId.isEmpty && result.message.isEmpty) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Update status failed.')));

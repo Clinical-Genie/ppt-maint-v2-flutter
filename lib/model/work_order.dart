@@ -2,10 +2,12 @@ import 'package:maintapp/common/data_helper.dart';
 
 class WorkOrder {
   String id = '';
+  String message = '';
   String woNo = '';
   String woType = ''; //CM or PM
   String status =
       ''; // pending, in_progress, completed, etc. updated by backend based on workflow
+  bool isTransferring = false;
 
   String contactName = '';
   String contactNumber = '';
@@ -32,7 +34,6 @@ class WorkOrder {
   String ownerUserId = '';
   String ownerFullName = '';
 
-  String haRequestPdfUrl = '';
   String sourceFileId = '';
   String sourceFileName = '';
   String sourceFileUrl = '';
@@ -53,9 +54,11 @@ class WorkOrder {
     raw = Map<String, dynamic>.from(json);
 
     id = DataHelper.getStringSafely(json, 'id', '');
+    message = DataHelper.getStringSafely(json, 'message', '');
     woNo = DataHelper.getStringSafely(json, 'wo_no', '');
     woType = DataHelper.getStringSafely(json, 'wo_type', '');
     status = DataHelper.getStringSafely(json, 'status', '');
+    isTransferring = DataHelper.getBoolSafely(json, 'is_transferring', false);
 
     locationCode = DataHelper.getStringSafely(
       json,
@@ -86,11 +89,6 @@ class WorkOrder {
     ownerUserId = DataHelper.getStringSafely(json, 'owner_user_id', '');
     ownerFullName = DataHelper.getStringSafely(json, 'owner_full_name', '');
 
-    haRequestPdfUrl = DataHelper.getStringSafely(
-      json,
-      'ha_request_pdf_url',
-      DataHelper.getStringSafely(json, 'source_file_url', ''),
-    );
     sourceFileId = DataHelper.getStringSafely(json, 'source_file_id', '');
     sourceFileName = DataHelper.getStringSafely(json, 'source_file_name', '');
     sourceFileUrl = DataHelper.getStringSafely(json, 'source_file_url', '');
@@ -110,6 +108,7 @@ class WorkOrder {
       if (woType.isNotEmpty) 'wo_type': woType,
       if (woType.isNotEmpty) 'woType': woType,
       if (status.isNotEmpty) 'status': status,
+      'is_transferring': isTransferring,
       if (locationCode.isNotEmpty) 'location_code': locationCode,
       if (institutionCode.isNotEmpty) 'institution_code': institutionCode,
       if (institutionCode.isNotEmpty) 'institutionCode': institutionCode,
@@ -132,7 +131,6 @@ class WorkOrder {
       if (remark.isNotEmpty) 'remark': remark,
       if (description.isNotEmpty) 'description': description,
       if (ownerUserId.isNotEmpty) 'owner_user_id': ownerUserId,
-      if (haRequestPdfUrl.isNotEmpty) 'ha_request_pdf_url': haRequestPdfUrl,
       if (sourceFileId.isNotEmpty) 'source_file_id': sourceFileId,
       if (ocrJobId.isNotEmpty) 'ocr_job_id': ocrJobId,
       if (sourceFileName.isNotEmpty) 'source_file_name': sourceFileName,
@@ -143,9 +141,11 @@ class WorkOrder {
   Map<String, dynamic> toJson() {
     final data = Map<String, dynamic>.from(raw);
     data['id'] = id;
+    data['message'] = message;
     data['wo_no'] = woNo;
     data['wo_type'] = woType;
     data['status'] = status;
+    data['is_transferring'] = isTransferring;
     data['location_code'] = locationCode;
     data['institution_code'] = institutionCode;
     data['asset_number'] = assetNumber;
@@ -166,7 +166,6 @@ class WorkOrder {
     data['description'] = description;
     data['owner_user_id'] = ownerUserId;
     data['owner_full_name'] = ownerFullName;
-    data['ha_request_pdf_url'] = haRequestPdfUrl;
     data['source_file_id'] = sourceFileId;
     data['source_file_name'] = sourceFileName;
     data['source_file_url'] = sourceFileUrl;
@@ -299,7 +298,7 @@ class WorkOrderOcrResult {
     sourceFileUrl = DataHelper.getStringSafely(
       json,
       'source_file_url',
-      DataHelper.getStringSafely(json, 'ha_request_pdf_url', ''),
+      '',
     );
     ocrJobId = DataHelper.getStringSafely(json, 'ocr_job_id', '');
     extractionMode = DataHelper.getStringSafely(

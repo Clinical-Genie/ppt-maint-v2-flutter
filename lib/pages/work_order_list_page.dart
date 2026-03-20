@@ -2,9 +2,15 @@ import 'dart:developer';
 
 import 'package:flutter/material.dart';
 import 'package:maintapp/api/api_controller.dart';
+import 'package:maintapp/model/admin_result.dart';
+import 'package:maintapp/model/api_result.dart';
 import 'package:maintapp/model/user_info.dart';
 import 'package:maintapp/model/work_order.dart';
+import 'package:maintapp/pages/email_batch_detail_page.dart';
 import 'package:maintapp/pages/shared/app_drawer.dart';
+import 'package:maintapp/pages/transfer_request_list_page.dart';
+import 'package:maintapp/pages/work_order_detail_page.dart';
+import 'package:maintapp/pages/work_order_email_history_page.dart';
 import 'package:maintapp/state/app_state.dart';
 import 'package:maintapp/state/login_session_controller.dart';
 
@@ -16,8 +22,10 @@ class WorkOrderListPage extends StatefulWidget {
 }
 
 class _WorkOrderListPageState extends State<WorkOrderListPage> {
-  final _searchController = TextEditingController();
   final _institutionController = TextEditingController();
+  final _woNoSearchController = TextEditingController();
+  final _assetNumberSearchController = TextEditingController();
+  final _serialNumberSearchController = TextEditingController();
   final _listHeaderScrollController = ScrollController();
   final _listBodyScrollController = ScrollController();
   bool _syncingHorizontalTableScroll = false;
@@ -43,19 +51,19 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
 
   bool _isLoading = false;
   bool _isLoadingUsers = false;
-  bool _useCardView = true;
+  bool _useCardView = false;
   bool _includeInactiveEngineers = false;
   bool _showCompactEngineerFilters = false;
+  bool _showCompactManagerFilters = false;
+  bool _showDetailedSearch = false;
   static const double _cardModeWidthBreakpoint = 680.0;
   static const int _pageSize = 20;
-  String _searchQuery = '';
   String _selectedInstitutionCode = '';
   String _engineerTab = 'unassigned';
   String? _selectedEngineerId;
   List<String> _selectedStatuses = [];
   DateTime? _plannedDateFilter;
-  DateTime? _dateFrom;
-  DateTime? _dateTo;
+  DateTimeRange? _haOutboundRange;
   int _currentPage = 1;
   int _totalItems = 0;
   int _currentOffset = 0;
@@ -69,8 +77,10 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
 
   @override
   void dispose() {
-    _searchController.dispose();
     _institutionController.dispose();
+    _woNoSearchController.dispose();
+    _assetNumberSearchController.dispose();
+    _serialNumberSearchController.dispose();
     _listHeaderScrollController.dispose();
     _listBodyScrollController.dispose();
     super.dispose();
@@ -170,6 +180,8 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     String? tabFilter;
     String? ownerFilter;
     String? plannedDateFilter;
+    String? haOutboundFrom;
+    String? haOutboundTo;
 
     if (hasEngineerRole) {
       tabFilter = _engineerTab;
@@ -188,6 +200,26 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     }
 
     final statusFilter = _selectedStatuses.join(',');
+    if (_haOutboundRange != null) {
+      final start = _haOutboundRange!.start;
+      final end = _haOutboundRange!.end;
+      haOutboundFrom = DateTime.utc(
+        start.year,
+        start.month,
+        start.day,
+        0,
+        0,
+        0,
+      ).toIso8601String();
+      haOutboundTo = DateTime.utc(
+        end.year,
+        end.month,
+        end.day,
+        23,
+        59,
+        59,
+      ).toIso8601String();
+    }
 
     try {
       final payload = await ApiController.listWorkOrders(
@@ -201,6 +233,17 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         ownerUserId: ownerFilter,
         plannedDate: plannedDateFilter,
         status: statusFilter.isEmpty ? null : statusFilter,
+        woNo: _woNoSearchController.text.trim().isEmpty
+            ? null
+            : _woNoSearchController.text.trim(),
+        assetNumber: _assetNumberSearchController.text.trim().isEmpty
+            ? null
+            : _assetNumberSearchController.text.trim(),
+        serialNumber: _serialNumberSearchController.text.trim().isEmpty
+            ? null
+            : _serialNumberSearchController.text.trim(),
+        haOutboundFrom: haOutboundFrom,
+        haOutboundTo: haOutboundTo,
       );
       if (!mounted) return;
       final loadedItems = hasEngineerRole && _engineerTab == 'picked_by_others'
@@ -229,38 +272,36 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     _loadWorkOrders();
   }
 
-  Future<void> _pickDateFrom() async {
-    final picked = await showDatePicker(
+  Future<void> _pickHaOutboundDateRange() async {
+    final now = DateTime.now();
+    final picked = await showDateRangePicker(
       context: context,
-      initialDate: _dateFrom ?? DateTime.now(),
+      initialDateRange: _haOutboundRange,
       firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 3650)),
+      lastDate: now.add(const Duration(days: 3650)),
+      saveText: 'Select',
     );
     if (picked != null && mounted) {
       setState(() {
-        _dateFrom = picked;
+        _haOutboundRange = picked;
+        _currentPage = 1;
       });
-      _loadWorkOrders();
     }
   }
 
-  Future<void> _pickDateTo() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _dateTo ?? DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 3650)),
-    );
-    if (picked != null && mounted) {
-      setState(() {
-        _dateTo = picked;
-      });
-      _loadWorkOrders();
-    }
+  void _applyDetailedSearch() {
+    setState(() => _currentPage = 1);
+    _loadWorkOrders();
   }
 
-  void _onSearch() {
-    setState(() => _searchQuery = _searchController.text);
+  void _clearDetailedSearch() {
+    setState(() {
+      _woNoSearchController.clear();
+      _assetNumberSearchController.clear();
+      _serialNumberSearchController.clear();
+      _haOutboundRange = null;
+      _currentPage = 1;
+    });
     _loadWorkOrders();
   }
 
@@ -401,6 +442,18 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     });
   }
 
+  void _toggleCompactManagerFilters() {
+    setState(() {
+      _showCompactManagerFilters = !_showCompactManagerFilters;
+    });
+  }
+
+  void _toggleDetailedSearch() {
+    setState(() {
+      _showDetailedSearch = !_showDetailedSearch;
+    });
+  }
+
   Future<void> _pickPlannedDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -520,6 +573,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
   bool _isMine(WorkOrder order) => order.ownerUserId == _userId;
   bool _isAssignedToOthers(WorkOrder order) =>
       order.ownerUserId.isNotEmpty && order.ownerUserId != _userId;
+  bool _isPendingTransfer(WorkOrder order) => order.isTransferring;
   String _lookupOwnerNameById(String ownerUserId) {
     if (ownerUserId.isEmpty) return '';
     for (final user in _allUsers) {
@@ -530,12 +584,51 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     return '';
   }
 
+  bool _isOwnerInactive(String ownerUserId) {
+    if (ownerUserId.isEmpty) return false;
+    for (final user in _allUsers) {
+      if (user.id == ownerUserId) {
+        return !user.isActive;
+      }
+    }
+    return false;
+  }
+
   String _ownerDisplayName(WorkOrder order) {
     if (order.ownerFullName.isNotEmpty) {
       return order.ownerFullName;
     }
     final fromEngineers = _lookupOwnerNameById(order.ownerUserId);
     return fromEngineers.isNotEmpty ? fromEngineers : order.ownerUserId;
+  }
+
+  Widget _buildOwnerNameCell({
+    required String ownerName,
+    required String ownerUserId,
+    required TextStyle style,
+  }) {
+    final isInactive = _isOwnerInactive(ownerUserId);
+    return Row(
+      children: [
+        if (isInactive)
+          const Padding(
+            padding: EdgeInsets.only(right: 4),
+            child: Icon(Icons.close, size: 14, color: Color(0xFFB91C1C)),
+          ),
+        Expanded(
+          child: SelectionArea(
+            child: Text(
+              ownerName,
+              style: style,
+              maxLines: 1,
+              // minLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   String _createdDisplayDate(WorkOrder order) {
@@ -855,6 +948,14 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     );
   }
 
+  void _viewDetails(WorkOrder order, BuildContext rowContext) {
+    Navigator.of(rowContext).push(
+      MaterialPageRoute(
+        builder: (_) => WorkOrderDetailPage(workOrderId: order.id),
+      ),
+    );
+  }
+
   Future<void> _runAction(
     String action,
     WorkOrder order,
@@ -863,7 +964,33 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     try {
       String feedback;
       final user = LoginSessionController.instance.userInfo;
-      if (action == 'edit') {
+      if (action == 'view_details') {
+        await Navigator.of(rowContext).push(
+          MaterialPageRoute(
+            builder: (_) => WorkOrderDetailPage(workOrderId: order.id),
+          ),
+        );
+        return;
+      } else if (action == 'open_incoming_transfers') {
+        await Navigator.of(rowContext).push(
+          MaterialPageRoute(
+            builder: (_) => const TransferRequestListPage(
+              initialMode: TransferRequestPageMode.incoming,
+            ),
+          ),
+        );
+        return;
+      } else if (action == 'email_history') {
+        await Navigator.of(rowContext).push(
+          MaterialPageRoute(
+            builder: (_) => WorkOrderEmailHistoryPage(workOrder: order),
+          ),
+        );
+        return;
+      } else if (action == 'create_email_draft') {
+        await _createEmailDraftForWorkOrder(order, rowContext);
+        return;
+      } else if (action == 'edit') {
         ScaffoldMessenger.of(rowContext).showSnackBar(
           const SnackBar(content: Text('Edit action is not available yet.')),
         );
@@ -896,23 +1023,21 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         if (engineerId == null || engineerId.isEmpty) return;
         final reason = await _promptReason('Hand off reason');
         if (reason == null || reason.isEmpty) return;
-        feedback = _toActionMessage(
-          await ApiController.assignWorkOrder(
-            order.id,
-            targetUserId: engineerId,
-            reason: reason,
-          ),
+        await ApiController.createTransferRequest(
+          order.id,
+          toEngineerId: engineerId,
+          reason: reason,
         );
+        feedback = 'Transfer request created.';
       } else if (action == 'transfer_to_me') {
         final reason = await _promptReason('Take over reason');
         if (reason == null || reason.isEmpty) return;
-        feedback = _toActionMessage(
-          await ApiController.assignWorkOrder(
-            order.id,
-            targetUserId: user.id,
-            reason: reason,
-          ),
+        await ApiController.createTransferRequest(
+          order.id,
+          toEngineerId: user.id,
+          reason: reason,
         );
+        feedback = 'Takeover request created.';
       } else if (action == 'release_to_unassigned') {
         final reason = await _promptReason('Return to public pool');
         if (reason == null || reason.isEmpty) return;
@@ -947,10 +1072,31 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     required bool hasManagerRole,
     required bool hasEngineerRole,
   }) {
+    if (_isPendingTransfer(order)) {
+      return const <PopupMenuEntry<String>>[
+        // PopupMenuItem(value: 'view_details', child: Text('View details')),
+        // PopupMenuItem(value: 'email_history', child: Text('Email history')),
+        PopupMenuItem(
+          value: 'open_incoming_transfers',
+          child: Text('Manage transfer'),
+        ),
+      ];
+    }
+
     final items = <PopupMenuEntry<String>>[];
 
+    // items.add(
+    //   const PopupMenuItem(value: 'view_details', child: Text('View details')),
+    // );
+
     if (hasManagerRole) {
-      items.add(const PopupMenuItem(value: 'edit', child: Text('Edit')));
+      // items.add(const PopupMenuItem(value: 'edit', child: Text('Edit')));
+      items.add(
+        const PopupMenuItem(
+          value: 'create_email_draft',
+          child: Text('Create email draft'),
+        ),
+      );
       items.add(
         const PopupMenuItem(
           value: 'assign_to_engineer',
@@ -971,6 +1117,10 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       if (_isUnassigned(order)) {
         items.add(const PopupMenuItem(value: 'take', child: Text('Take it')));
       } else if (_isMine(order)) {
+        items.add(const PopupMenuItem(value: 'plan', child: Text('Schedule')));
+        items.add(
+          const PopupMenuItem(value: 'start', child: Text('Start work')),
+        );
         items.add(
           const PopupMenuItem(value: 'transfer_away', child: Text('Hand off')),
         );
@@ -982,10 +1132,6 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
             ),
           );
         }
-        items.add(const PopupMenuItem(value: 'plan', child: Text('Schedule')));
-        items.add(
-          const PopupMenuItem(value: 'start', child: Text('Start work')),
-        );
       } else if (_isAssignedToOthers(order)) {
         items.add(
           const PopupMenuItem(
@@ -1010,12 +1156,136 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
 
   String _toActionMessage(dynamic result) {
     if (result is String) return result;
+    if (result is ApiMessageResult) return result.message;
+    if (result is WorkOrderActionResult) {
+      return result.message.isNotEmpty ? result.message : 'Done';
+    }
+    if (result is AdminPingResult) {
+      return result.message.isNotEmpty ? result.message : result.status;
+    }
     if (result is Map) {
       final raw = Map<dynamic, dynamic>.from(result);
       if (raw['message'] is String) return raw['message'] as String;
       if (raw['error'] is String) return raw['error'] as String;
     }
     return 'Done';
+  }
+
+  Future<void> _createEmailDraftForWorkOrder(
+    WorkOrder order,
+    BuildContext context,
+  ) async {
+    final toEmailsController = TextEditingController();
+    final subjectController = TextEditingController(
+      text: order.woNo.isEmpty ? 'Work order batch' : 'WO ${order.woNo}',
+    );
+    final bodyTextController = TextEditingController();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        bool creating = false;
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              title: Text('Create Email Draft for ${order.referenceNumber}'),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: toEmailsController,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: 'Recipients',
+                        hintText: 'Comma-separated emails',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: subjectController,
+                      decoration: const InputDecoration(
+                        labelText: 'Subject',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: bodyTextController,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        labelText: 'Body',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: creating
+                      ? null
+                      : () async {
+                          final emails = toEmailsController.text
+                              .split(',')
+                              .map((item) => item.trim())
+                              .where((item) => item.isNotEmpty)
+                              .toList();
+                          if (emails.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'At least one recipient is required.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+                          setStateDialog(() => creating = true);
+                          try {
+                            final created =
+                                await ApiController.createEmailBatch(
+                                  workOrderIds: [order.id],
+                                  toEmails: emails,
+                                  subject: subjectController.text.trim(),
+                                  bodyText: bodyTextController.text.trim(),
+                                );
+                            if (!mounted) return;
+                            if (dialogContext.mounted) {
+                              Navigator.of(dialogContext).pop();
+                            }
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => EmailBatchDetailPage(
+                                  batchId: created.emailBatchId,
+                                ),
+                              ),
+                            );
+                          } catch (e) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text('$e')));
+                          } finally {
+                            if (dialogContext.mounted) {
+                              setStateDialog(() => creating = false);
+                            }
+                          }
+                        },
+                  child: const Text('Create Draft'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Widget _buildOwnerChip(WorkOrder order) {
@@ -1116,17 +1386,62 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       message: status,
       child: SizedBox(
         width: maxWidth,
-        child: SelectableText(
-          status,
-          maxLines: 1,
-          // overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: textColor,
-            fontWeight: FontWeight.w700,
-            fontSize: 12,
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SelectableText(
+              status,
+              maxLines: 1,
+              style: TextStyle(
+                color: textColor,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
+            if (_isPendingTransfer(order))
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text(
+                  'Pending transfer',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF9A3412),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPendingTransferChip() {
+    return const Chip(
+      label: Text('Pending transfer'),
+      backgroundColor: Color(0xFFFFF7ED),
+      side: BorderSide(color: Color(0xFFFED7AA)),
+      labelStyle: TextStyle(
+        color: Color(0xFF9A3412),
+        fontWeight: FontWeight.w700,
+        fontSize: 12,
+      ),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  Widget _buildStatusTagColumn(WorkOrder order) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        _buildStatusChip(order),
+        if (_isPendingTransfer(order)) ...[
+          const SizedBox(height: 6),
+          _buildPendingTransferChip(),
+        ],
+      ],
     );
   }
 
@@ -1174,19 +1489,27 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                             const SizedBox(width: 8),
                           ],
                           Expanded(
-                            child: SelectableText(
-                              item.woNo.isNotEmpty
-                                  ? item.woNo
-                                  : item.displayLabel,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 17,
-                                color: _isPriorityCritical(item)
-                                    ? const Color(0xFFB91C1C)
-                                    : const Color(0xFF0F172A),
-                                decoration: _isPriorityCritical(item)
-                                    ? TextDecoration.underline
-                                    : TextDecoration.none,
+                            child: InkWell(
+                              onTap: () => _viewDetails(item, context),
+                              borderRadius: BorderRadius.circular(6),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 2,
+                                  horizontal: 2,
+                                ),
+                                child: Text(
+                                  item.woNo.isNotEmpty
+                                      ? item.woNo
+                                      : item.displayLabel,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 17,
+                                    color: _isPriorityCritical(item)
+                                        ? const Color(0xFFB91C1C)
+                                        : const Color(0xFF0F172A),
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
@@ -1224,8 +1547,9 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                             ),
                             const SizedBox(width: 6),
                             Expanded(
-                              child: SelectableText(
-                                ownerName,
+                              child: _buildOwnerNameCell(
+                                ownerName: ownerName,
+                                ownerUserId: item.ownerUserId,
                                 style: const TextStyle(
                                   fontSize: 13,
                                   color: Color(0xFF1D4ED8),
@@ -1234,6 +1558,17 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                               ),
                             ),
                           ],
+                        ),
+                      ],
+                      if (_isPendingTransfer(item)) ...[
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Transfer request pending',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF9A3412),
+                          ),
                         ),
                       ],
                       const SizedBox(height: 8),
@@ -1301,7 +1636,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                 ),
               ],
             ),
-            Positioned(top: 0, right: 0, child: _buildStatusChip(item)),
+            Positioned(top: 0, right: 0, child: _buildStatusTagColumn(item)),
           ],
         ),
       ),
@@ -1404,17 +1739,25 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                   const SizedBox(width: 6),
                 ],
                 Expanded(
-                  child: SelectableText(
-                    item.woNo.isNotEmpty ? item.woNo : item.displayLabel,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      color: _isPriorityCritical(item)
-                          ? const Color(0xFFB91C1C)
-                          : const Color(0xFF0F172A),
-                      decoration: _isPriorityCritical(item)
-                          ? TextDecoration.underline
-                          : TextDecoration.none,
+                  child: InkWell(
+                    onTap: () => _viewDetails(item, context),
+                    borderRadius: BorderRadius.circular(6),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 2,
+                        horizontal: 2,
+                      ),
+                      child: Text(
+                        item.woNo.isNotEmpty ? item.woNo : item.displayLabel,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: _isPriorityCritical(item)
+                              ? const Color(0xFFB91C1C)
+                              : const Color(0xFF0F172A),
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -1442,18 +1785,24 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
           ),
           cell(
             width: ownerWidth,
-            child: SelectableText(
-              hasPickedEngineer ? ownerName : '-',
-              style: TextStyle(
-                fontSize: 14,
-                color: hasPickedEngineer
-                    ? const Color(0xFF1D4ED8)
-                    : const Color(0xFF334155),
-                fontWeight: hasPickedEngineer
-                    ? FontWeight.w600
-                    : FontWeight.w400,
-              ),
-            ),
+            child: hasPickedEngineer
+                ? _buildOwnerNameCell(
+                    ownerName: ownerName,
+                    ownerUserId: item.ownerUserId,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF1D4ED8),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  )
+                : const SelectableText(
+                    '-',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF334155),
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
           ),
           cell(
             width: statusWidth,
@@ -1503,11 +1852,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       ),
       child: Text(
         label,
-        style: const TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w800,
-          color: Color(0xFF0F172A),
-        ),
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
       ),
     );
   }
@@ -1515,6 +1860,11 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
   String _dateText(DateTime? value) {
     if (value == null) return 'Any';
     return '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+  }
+
+  String _dateRangeText(DateTimeRange? value) {
+    if (value == null) return 'HA outbound date range';
+    return '${_dateText(value.start)} to ${_dateText(value.end)}';
   }
 
   bool _hasRole(UserInfo user, String role) {
@@ -1712,18 +2062,223 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     );
   }
 
-  Widget _buildManagerFilters(bool useCompactLayout) {
+  Widget _buildDetailedSearchContent(bool useCompactLayout) {
+    final dateRangeButton = OutlinedButton.icon(
+      onPressed: _pickHaOutboundDateRange,
+      icon: const Icon(Icons.date_range_outlined, size: 18),
+      label: Text(_dateRangeText(_haOutboundRange)),
+    );
+    final hasDetailedSearchValue =
+        _woNoSearchController.text.trim().isNotEmpty ||
+        _assetNumberSearchController.text.trim().isNotEmpty ||
+        _serialNumberSearchController.text.trim().isNotEmpty ||
+        _haOutboundRange != null;
+
+    final toggleDetailButton = SizedBox(
+      height: 40,
+      child: TextButton.icon(
+        onPressed: _toggleDetailedSearch,
+        style: TextButton.styleFrom(
+          visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        icon: Icon(
+          _showDetailedSearch
+              ? Icons.keyboard_arrow_up
+              : Icons.keyboard_arrow_down,
+          size: 18,
+        ),
+        label: Text(
+          _showDetailedSearch ? 'hide' : 'more search options',
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+
     final content = useCompactLayout
         ? Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildInstitutionAutocomplete(double.infinity),
+              _buildDetailedSearchTextField(
+                controller: _woNoSearchController,
+                label: 'WO Number',
+              ),
               const SizedBox(height: 12),
-              _buildEngineerDropdown(double.infinity, enabled: true),
-              const SizedBox(height: 4),
-              _buildIncludeInactiveEngineersCheckbox(),
+              _buildDetailedSearchTextField(
+                controller: _assetNumberSearchController,
+                label: 'Asset Number',
+              ),
               const SizedBox(height: 12),
-              _buildStatusField(double.infinity),
+              _buildDetailedSearchTextField(
+                controller: _serialNumberSearchController,
+                label: 'Serial Number',
+              ),
+              const SizedBox(height: 12),
+              dateRangeButton,
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  FilledButton(
+                    onPressed: _applyDetailedSearch,
+                    child: const Text('Search'),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: hasDetailedSearchValue
+                        ? _clearDetailedSearch
+                        : null,
+                    child: const Text('Clear'),
+                  ),
+                ],
+              ),
+            ],
+          )
+        : Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _buildDetailedSearchTextField(
+                controller: _woNoSearchController,
+                label: 'WO Number',
+                width: 180,
+              ),
+              _buildDetailedSearchTextField(
+                controller: _assetNumberSearchController,
+                label: 'Asset Number',
+                width: 180,
+              ),
+              _buildDetailedSearchTextField(
+                controller: _serialNumberSearchController,
+                label: 'Serial Number',
+                width: 200,
+              ),
+              dateRangeButton,
+              FilledButton(
+                onPressed: _applyDetailedSearch,
+                child: const Text('Search'),
+              ),
+              TextButton(
+                onPressed: hasDetailedSearchValue ? _clearDetailedSearch : null,
+                child: const Text('Clear'),
+              ),
+
+              const SizedBox(height: 12),
+              toggleDetailButton,
+            ],
+          );
+
+    return content;
+  }
+
+  Widget _buildDetailedSearchTextField({
+    required TextEditingController controller,
+    required String label,
+    double width = double.infinity,
+  }) {
+    return SizedBox(
+      width: width,
+      child: TextField(
+        controller: controller,
+        decoration: InputDecoration(
+          labelText: label,
+          isDense: true,
+          border: const OutlineInputBorder(),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 10,
+          ),
+        ),
+        onSubmitted: (_) => _applyDetailedSearch(),
+      ),
+    );
+  }
+
+  // Widget _buildDetailedSearchToggle() {
+  //   return Align(
+  //     alignment: Alignment.centerLeft,
+  //     child: TextButton.icon(
+  //       onPressed: () {
+  //         setState(() => _showDetailedSearch = !_showDetailedSearch);
+  //       },
+  //       icon: Icon(
+  //         _showDetailedSearch
+  //             ? Icons.keyboard_arrow_up
+  //             : Icons.keyboard_arrow_down,
+  //       ),
+  //       label: Text(
+  //         _showDetailedSearch
+  //             ? 'Hide detailed search'
+  //             : 'More search options',
+  //       ),
+  //     ),
+  //   );
+  // }
+
+  Widget _buildManagerFilters(bool useCompactLayout) {
+    final toggleDetailButton = SizedBox(
+      height: 40,
+      child: TextButton.icon(
+        onPressed: _toggleDetailedSearch,
+        style: TextButton.styleFrom(
+          visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        icon: Icon(
+          _showDetailedSearch
+              ? Icons.keyboard_arrow_up
+              : Icons.keyboard_arrow_down,
+          size: 18,
+        ),
+        label: Text(
+          _showDetailedSearch ? 'hide' : 'more search options',
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+
+    final toggleManagerButton = Align(
+      alignment: Alignment.center,
+      child: TextButton.icon(
+        onPressed: _toggleCompactManagerFilters,
+        style: TextButton.styleFrom(
+          visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        icon: Icon(
+          _showCompactManagerFilters
+              ? Icons.keyboard_arrow_up
+              : Icons.keyboard_arrow_down,
+          size: 18,
+        ),
+        label: Text(
+          _showCompactManagerFilters ? 'hide' : 'search',
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+
+    final mainContent = useCompactLayout
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (!_showCompactManagerFilters) toggleManagerButton,
+              if (_showCompactManagerFilters) ...[
+                _buildInstitutionAutocomplete(double.infinity),
+                const SizedBox(height: 12),
+                _buildEngineerDropdown(double.infinity, enabled: true),
+                const SizedBox(height: 4),
+                _buildIncludeInactiveEngineersCheckbox(),
+                const SizedBox(height: 12),
+                _buildStatusField(double.infinity),
+                const SizedBox(height: 4),
+              ],
             ],
           )
         : Wrap(
@@ -1742,8 +2297,25 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                 ],
               ),
               _buildStatusField(240),
+              if (!_showDetailedSearch) toggleDetailButton,
             ],
           );
+
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        mainContent,
+        // const SizedBox(height: 4),
+        // _buildDetailedSearchToggle(),
+        if (!useCompactLayout && _showDetailedSearch ||
+            (useCompactLayout && _showCompactManagerFilters)) ...[
+          const SizedBox(height: 8),
+          _buildDetailedSearchContent(useCompactLayout),
+          if (useCompactLayout && _showCompactManagerFilters)
+            toggleManagerButton,
+        ],
+      ],
+    );
 
     return _buildQuickFilterContainer(title: 'Manager filters', child: content);
   }
@@ -1802,35 +2374,37 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         runSpacing: 8,
         children: tabs
             .map(
-              (item) => ChoiceChip(
-                tooltip: item.$2,
-                label: Icon(
-                  compactTabIcons[item.$1] ?? Icons.radio_button_checked,
-                  size: 18,
-                  color: item.$1 == _engineerTab
-                      ? Colors.white
-                      : const Color(0xFF334155),
-                ),
-                selected: item.$1 == _engineerTab,
-                onSelected: (_) => _onEngineerTabChanged(item.$1),
-                selectedColor: const Color(0xFF0F766E),
-                backgroundColor: Colors.white,
-                side: BorderSide(
-                  color: item.$1 == _engineerTab
-                      ? const Color(0xFF0F766E)
-                      : const Color(0xFFCBD5E1),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: const VisualDensity(
-                  horizontal: -2,
-                  vertical: -2,
-                ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
+              (item) => Tooltip(
+                message: item.$2,
+                child: ChoiceChip(
+                  label: Icon(
+                    compactTabIcons[item.$1] ?? Icons.radio_button_checked,
+                    size: 18,
+                    color: item.$1 == _engineerTab
+                        ? Colors.white
+                        : const Color(0xFF334155),
+                  ),
+                  selected: item.$1 == _engineerTab,
+                  onSelected: (_) => _onEngineerTabChanged(item.$1),
+                  selectedColor: const Color(0xFF0F766E),
+                  backgroundColor: Colors.white,
+                  side: BorderSide(
+                    color: item.$1 == _engineerTab
+                        ? const Color(0xFF0F766E)
+                        : const Color(0xFFCBD5E1),
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: const VisualDensity(
+                    horizontal: -2,
+                    vertical: -2,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
                 ),
               ),
             )
@@ -1855,7 +2429,53 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
             child: const Text('Clear date'),
           );
 
-    final content = useCompactLayout
+    final toggleDetailButton = SizedBox(
+      height: 40,
+      child: TextButton.icon(
+        onPressed: _toggleDetailedSearch,
+        style: TextButton.styleFrom(
+          visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        icon: Icon(
+          _showDetailedSearch
+              ? Icons.keyboard_arrow_up
+              : Icons.keyboard_arrow_down,
+          size: 18,
+        ),
+        label: Text(
+          _showDetailedSearch ? 'hide' : 'more search options',
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+
+    final toggleEngineerButton = Align(
+      alignment: Alignment.center,
+      child: TextButton.icon(
+        onPressed: _toggleCompactEngineerFilters,
+        style: TextButton.styleFrom(
+          visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        icon: Icon(
+          _showCompactEngineerFilters
+              ? Icons.keyboard_arrow_up
+              : Icons.keyboard_arrow_down,
+          size: 18,
+        ),
+        label: Text(
+          _showCompactEngineerFilters ? 'hide' : 'search',
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+
+    final mainContent = useCompactLayout
         ? Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1872,39 +2492,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
               const SizedBox(height: 6),
               compactTabWrap,
               const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.center,
-                child: TextButton.icon(
-                  onPressed: _toggleCompactEngineerFilters,
-                  style: TextButton.styleFrom(
-                    visualDensity: const VisualDensity(
-                      horizontal: -2,
-                      vertical: -2,
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 2,
-                    ),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  icon: Icon(
-                    _showCompactEngineerFilters
-                        ? Icons.keyboard_arrow_up
-                        : Icons.keyboard_arrow_down,
-                    size: 18,
-                  ),
-                  label: Text(
-                    _showCompactEngineerFilters
-                        ? 'Hide filters'
-                        : 'Show filters',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
+              if (!_showCompactEngineerFilters) toggleEngineerButton,
               if (_showCompactEngineerFilters) ...[
                 const SizedBox(height: 8),
                 _buildInstitutionAutocomplete(double.infinity),
@@ -1927,6 +2515,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                     children: [plannedDateButton, plannedDateClear],
                   ),
                 ],
+                // if (_showCompactEngineerFilters) toggleEngineerButton,
               ],
             ],
           )
@@ -1934,6 +2523,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
             spacing: 12,
             runSpacing: 12,
             crossAxisAlignment: WrapCrossAlignment.start,
+
             children: [
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -1955,8 +2545,25 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
               if (showPlannedDate) plannedDateButton,
               if (showPlannedDate && _plannedDateFilter != null)
                 plannedDateClear,
+              if (!_showDetailedSearch) ...[toggleDetailButton],
             ],
           );
+
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        mainContent,
+        const SizedBox(height: 4),
+        // _buildDetailedSearchToggle(),
+        if (!useCompactLayout && _showDetailedSearch ||
+            useCompactLayout && _showCompactEngineerFilters) ...[
+          const SizedBox(height: 8),
+          _buildDetailedSearchContent(useCompactLayout),
+          if (useCompactLayout && _showCompactEngineerFilters)
+            toggleEngineerButton,
+        ],
+      ],
+    );
 
     return _buildQuickFilterContainer(
       title: 'Engineer filters',
@@ -2098,11 +2705,11 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
               ),
             ),
           ),
-          // IconButton(
-          //   tooltip: 'Refresh',
-          //   onPressed: _loadWorkOrders,
-          //   icon: const Icon(Icons.refresh),
-          // ),
+          IconButton(
+            tooltip: 'Refresh',
+            onPressed: _loadWorkOrders,
+            icon: const Icon(Icons.refresh),
+          ),
           const SizedBox(width: 10),
         ],
       ),

@@ -145,7 +145,7 @@ class _UserEditPageState extends State<UserEditPage> {
     bool obscurePassword = true;
     bool isSubmitting = false;
 
-    final result = await showDialog<Map<String, dynamic>?>(
+    final result = await showDialog<String?>(
       context: context,
       barrierDismissible: !isSubmitting,
       builder: (dialogContext) {
@@ -168,7 +168,12 @@ class _UserEditPageState extends State<UserEditPage> {
               );
 
               if (dialogContext.mounted) {
-                Navigator.of(dialogContext).pop(result);
+                final responseText = result.newPassword.isNotEmpty
+                    ? result.newPassword
+                    : (result.message.isNotEmpty
+                          ? result.message
+                          : 'Password reset completed.');
+                Navigator.of(dialogContext).pop(responseText);
               }
             }
 
@@ -262,13 +267,14 @@ class _UserEditPageState extends State<UserEditPage> {
     // newPasswordController.dispose();
 
     if (!mounted || result == null) return;
-    final tempPassword = result['temp_password'] ?? result['password'] ?? '';
-    if (tempPassword != null && '$tempPassword'.trim().isNotEmpty) {
-      await _showTempPasswordResultDialog('$tempPassword');
+    if (result.trim().isNotEmpty &&
+        !result.toLowerCase().contains('completed') &&
+        !result.toLowerCase().contains('reset')) {
+      await _showTempPasswordResultDialog(result);
       return;
     }
     log("Password reset result: $result");
-    final message = result['message'] ?? 'Password reset completed.';
+    final message = result;
     log("message after reset password: $message");
     // ScaffoldMessenger.of(
     //   context,
