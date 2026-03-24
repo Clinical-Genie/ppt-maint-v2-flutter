@@ -208,9 +208,6 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
             );
           }
         }
-        if (rows.isEmpty) {
-          rows.add(_DynamicTableRow(field));
-        }
         _tableRows[field.key] = rows;
       } else if (field.type == 'checkbox' || field.type == 'boolean') {
         final rawValue = sourceData[field.key];
@@ -350,34 +347,6 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
     }
   }
 
-  Widget _buildReadOnlyField(String label, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 82,
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF64748B),
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: SelectionArea(
-            child: SelectableText(
-              value.trim().isEmpty ? '-' : value.trim(),
-              style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A)),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildSectionTitle(String title) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -388,11 +357,205 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
     );
   }
 
+  String _fieldLabel(FormTemplateField field) {
+    return field.required ? field.label : '${field.label} (Optional)';
+  }
+
+  Widget _buildWorkOrderInfoBlock() {
+    final locationCode = widget.workOrder.locationCode.trim();
+    final locationParts = locationCode.split('-');
+    final locationPrefix = locationParts.isNotEmpty ? locationParts.first : '';
+    final locationRest =
+        locationPrefix.isNotEmpty && locationCode.startsWith(locationPrefix)
+        ? locationCode.substring(locationPrefix.length)
+        : locationCode;
+
+    final deviceText = [
+      if (widget.workOrder.deviceBrand.trim().isNotEmpty)
+        widget.workOrder.deviceBrand.trim(),
+      if (widget.workOrder.deviceModel.trim().isNotEmpty)
+        widget.workOrder.deviceModel.trim(),
+    ].join(' - ');
+
+    final contactText = [
+      if (widget.workOrder.contactName.trim().isNotEmpty)
+        widget.workOrder.contactName.trim(),
+      if (widget.workOrder.contactNumber.trim().isNotEmpty)
+        '(${widget.workOrder.contactNumber.trim()})',
+    ].join(' ');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SelectionArea(
+          child: SelectableText(
+            '${widget.workOrder.woNo.trim()} (${widget.workOrder.woType.trim().toUpperCase()})',
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Icon(
+                Icons.location_on_outlined,
+                size: 18,
+                color: Color(0xFF64748B),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SelectionArea(
+                child: RichText(
+                  text: TextSpan(
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF0F172A),
+                    ),
+                    children: [
+                      TextSpan(
+                        text: locationPrefix,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1D4ED8),
+                        ),
+                      ),
+                      TextSpan(text: locationRest),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (deviceText.isNotEmpty)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: Icon(
+                  Icons.memory_outlined,
+                  size: 18,
+                  color: Color(0xFF64748B),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SelectionArea(
+                  child: SelectableText(
+                    deviceText,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        if (widget.workOrder.assetNumber.trim().isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: Icon(
+                  Icons.confirmation_number_outlined,
+                  size: 18,
+                  color: Color(0xFF64748B),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SelectionArea(
+                  child: SelectableText(
+                    'Asset: ${widget.workOrder.assetNumber.trim()}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF334155),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+        if (widget.workOrder.serialNumber.trim().isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: Icon(
+                  Icons.tag_outlined,
+                  size: 18,
+                  color: Color(0xFF64748B),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SelectionArea(
+                  child: SelectableText(
+                    'S/N: ${widget.workOrder.serialNumber.trim()}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF334155),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+        if (contactText.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: Icon(
+                  Icons.phone_outlined,
+                  size: 18,
+                  color: Color(0xFF64748B),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SelectionArea(
+                  child: SelectableText(
+                    contactText,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF334155),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _buildFieldWidget(FormTemplateField field) {
     Widget wrapWithQuickChoices({required Widget child}) {
       final group = _choiceGroupByCode[field.choiceGroupCode.trim()];
-      final options = group?.items ?? const <FormTemplateChoiceItem>[];
-      if (field.choiceGroupCode.trim().isEmpty || options.isEmpty) {
+      final groupItems = group?.items ?? const <FormTemplateChoiceItem>[];
+      final fallbackOptions = field.options;
+      final hasChoices = groupItems.isNotEmpty || fallbackOptions.isNotEmpty;
+      if (field.choiceGroupCode.trim().isEmpty || !hasChoices) {
         return child;
       }
       final controller = _controllers[field.key];
@@ -402,68 +565,84 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: child),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: () async {
-                  final selectedText = await showDialog<String>(
-                    context: context,
-                    builder: (dialogContext) {
-                      return AlertDialog(
-                        title: Text('Select ${field.label}'),
-                        content: SizedBox(
-                          width: 420,
-                          child: ListView.separated(
-                            shrinkWrap: true,
-                            itemCount: options.length,
-                            separatorBuilder: (_, _) =>
-                                const Divider(height: 1),
-                            itemBuilder: (context, index) {
-                              final option = options[index];
-                              final insertText =
-                                  option.labelEn.trim().isNotEmpty
-                                  ? option.labelEn.trim()
-                                  : option.labelZh.trim().isNotEmpty
-                                  ? option.labelZh.trim()
-                                  : option.code.trim();
-                              return ListTile(
-                                title: Text(insertText),
-                                onTap: () =>
-                                    Navigator.of(dialogContext).pop(insertText),
-                              );
-                            },
-                          ),
+          child,
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerRight,
+            child: OutlinedButton(
+              onPressed: () async {
+                final selectedText = await showDialog<String>(
+                  context: context,
+                  builder: (dialogContext) {
+                    return AlertDialog(
+                      title: Text('Select ${_fieldLabel(field)}'),
+                      content: SizedBox(
+                        width: 420,
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: groupItems.isNotEmpty
+                              ? groupItems.length
+                              : fallbackOptions.length,
+                          separatorBuilder: (_, _) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final insertText = groupItems.isNotEmpty
+                                ? (() {
+                                    final option = groupItems[index];
+                                    if (option.labelEn.trim().isNotEmpty) {
+                                      return option.labelEn.trim();
+                                    }
+                                    if (option.labelZh.trim().isNotEmpty) {
+                                      return option.labelZh.trim();
+                                    }
+                                    return option.code.trim();
+                                  })()
+                                : (() {
+                                    final option = fallbackOptions[index];
+                                    if (option.label.trim().isNotEmpty) {
+                                      return option.label.trim();
+                                    }
+                                    if (option.labelEn.trim().isNotEmpty) {
+                                      return option.labelEn.trim();
+                                    }
+                                    if (option.labelZh.trim().isNotEmpty) {
+                                      return option.labelZh.trim();
+                                    }
+                                    return option.value.trim();
+                                  })();
+                            return ListTile(
+                              title: Text(insertText),
+                              onTap: () =>
+                                  Navigator.of(dialogContext).pop(insertText),
+                            );
+                          },
                         ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.of(dialogContext).pop(),
-                            child: const Text('Cancel'),
-                          ),
-                        ],
-                      );
-                    },
-                  );
-                  if (selectedText == null || selectedText.isEmpty) return;
-                  setState(() {
-                    controller.text = selectedText;
-                    controller.selection = TextSelection.fromPosition(
-                      TextPosition(offset: controller.text.length),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(dialogContext).pop(),
+                          child: const Text('Cancel'),
+                        ),
+                      ],
                     );
-                  });
-                },
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 14,
-                  ),
-                  minimumSize: const Size(44, 44),
+                  },
+                );
+                if (selectedText == null || selectedText.isEmpty) return;
+                setState(() {
+                  controller.text = selectedText;
+                  controller.selection = TextSelection.fromPosition(
+                    TextPosition(offset: controller.text.length),
+                  );
+                });
+              },
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 14,
                 ),
-                child: const Icon(Icons.list_alt_outlined),
+                minimumSize: const Size(44, 44),
               ),
-            ],
+              child: const Icon(Icons.list_alt_outlined),
+            ),
           ),
           const SizedBox(height: 8),
         ],
@@ -474,7 +653,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       return CheckboxListTile(
         contentPadding: EdgeInsets.zero,
         value: _boolValues[field.key] ?? false,
-        title: Text(field.label),
+        title: Text(_fieldLabel(field)),
         onChanged: (value) {
           setState(() {
             _boolValues[field.key] = value ?? false;
@@ -502,7 +681,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildSectionTitle(field.label),
+          _buildSectionTitle(_fieldLabel(field)),
           ...runtimeOptions.map(
             (option) => CheckboxListTile(
               contentPadding: EdgeInsets.zero,
@@ -541,7 +720,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildSectionTitle(field.label),
+          _buildSectionTitle(_fieldLabel(field)),
           ...runtimeOptions.map(
             (option) => RadioListTile<String>(
               contentPadding: EdgeInsets.zero,
@@ -566,7 +745,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
           controller: _controllers[field.key],
           maxLines: 4,
           decoration: InputDecoration(
-            labelText: field.label,
+            labelText: _fieldLabel(field),
             border: const OutlineInputBorder(),
           ),
         ),
@@ -578,7 +757,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
         readOnly: true,
         onTap: () => _pickDateForController(_controllers[field.key]!),
         decoration: InputDecoration(
-          labelText: field.label,
+          labelText: _fieldLabel(field),
           border: const OutlineInputBorder(),
           suffixIcon: const Icon(Icons.event_outlined),
         ),
@@ -617,36 +796,63 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
             final row = entry.value;
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  ...columns.map((column) {
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isNarrow = constraints.maxWidth < 720;
+                  final removeButton = IconButton(
+                    onPressed: () {
+                      setState(() {
+                        row.dispose();
+                        rows.removeAt(index);
+                      });
+                    },
+                    icon: const Icon(Icons.delete_outline),
+                  );
+
+                  final fieldWidgets = columns.map((column) {
                     final key = '${column['key'] ?? ''}'.trim();
-                    return Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: TextFormField(
-                          controller: row.controllers[key],
-                          decoration: InputDecoration(
-                            labelText: '${column['label'] ?? key}',
-                            border: const OutlineInputBorder(),
+                    return TextFormField(
+                      controller: row.controllers[key],
+                      decoration: InputDecoration(
+                        labelText: '${column['label'] ?? key}',
+                        border: const OutlineInputBorder(),
+                      ),
+                    );
+                  }).toList();
+
+                  if (isNarrow) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ...fieldWidgets.map(
+                          (fieldWidget) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: fieldWidget,
+                          ),
+                        ),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: removeButton,
+                        ),
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ...fieldWidgets.map(
+                        (fieldWidget) => Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: fieldWidget,
                           ),
                         ),
                       ),
-                    );
-                  }),
-                  IconButton(
-                    onPressed: rows.length == 1
-                        ? null
-                        : () {
-                            setState(() {
-                              row.dispose();
-                              rows.removeAt(index);
-                            });
-                          },
-                    icon: const Icon(Icons.delete_outline),
-                  ),
-                ],
+                      removeButton,
+                    ],
+                  );
+                },
               ),
             );
           }),
@@ -670,7 +876,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildSectionTitle(field.label),
+          _buildSectionTitle(_fieldLabel(field)),
           ...runtimeOptions.map((option) {
             _DynamicChoiceSelection current;
             final matchIndex = selectedItems.indexWhere(
@@ -720,7 +926,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       child: TextFormField(
         controller: _controllers[field.key],
         decoration: InputDecoration(
-          labelText: field.label,
+          labelText: _fieldLabel(field),
           border: const OutlineInputBorder(),
         ),
         validator: field.required
@@ -759,68 +965,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _buildSectionTitle('Work Order Information'),
-                          Wrap(
-                            spacing: 16,
-                            runSpacing: 8,
-                            children: [
-                              SizedBox(
-                                width: 220,
-                                child: _buildReadOnlyField(
-                                  'Reference',
-                                  widget.workOrder.woNo,
-                                ),
-                              ),
-                              SizedBox(
-                                width: 220,
-                                child: _buildReadOnlyField(
-                                  'Asset Number',
-                                  widget.workOrder.assetNumber,
-                                ),
-                              ),
-                              SizedBox(
-                                width: 220,
-                                child: _buildReadOnlyField(
-                                  'Brand',
-                                  widget.workOrder.deviceBrand,
-                                ),
-                              ),
-                              SizedBox(
-                                width: 220,
-                                child: _buildReadOnlyField(
-                                  'Serial Number',
-                                  widget.workOrder.serialNumber,
-                                ),
-                              ),
-                              SizedBox(
-                                width: 220,
-                                child: _buildReadOnlyField(
-                                  'Product Model',
-                                  widget.workOrder.deviceModel,
-                                ),
-                              ),
-                              SizedBox(
-                                width: 320,
-                                child: _buildReadOnlyField(
-                                  'Customer',
-                                  widget.workOrder.locationCode,
-                                ),
-                              ),
-                              SizedBox(
-                                width: 220,
-                                child: _buildReadOnlyField(
-                                  'Contact',
-                                  widget.workOrder.contactName,
-                                ),
-                              ),
-                              SizedBox(
-                                width: 220,
-                                child: _buildReadOnlyField(
-                                  'Tel',
-                                  widget.workOrder.contactNumber,
-                                ),
-                              ),
-                            ],
-                          ),
+                          _buildWorkOrderInfoBlock(),
                         ],
                       ),
                     ),

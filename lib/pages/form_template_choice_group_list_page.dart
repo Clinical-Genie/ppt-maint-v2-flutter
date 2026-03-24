@@ -55,7 +55,9 @@ class _FormTemplateChoiceGroupListPageState
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: Text(group == null ? 'Add Choice Group' : 'Edit Choice Group'),
+              title: Text(
+                group == null ? 'Add Choice Group' : 'Edit Choice Group',
+              ),
               content: SizedBox(
                 width: 460,
                 child: Column(
@@ -138,9 +140,9 @@ class _FormTemplateChoiceGroupListPageState
                             await _load();
                           } catch (e) {
                             if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('$e')),
-                            );
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text('$e')));
                             setDialogState(() => submitting = false);
                           }
                         },
@@ -217,20 +219,26 @@ class _FormTemplateChoiceGroupListPageState
                             spacing: 8,
                             children: [
                               Chip(
-                                label: Text(item.isActive ? 'Active' : 'Inactive'),
+                                label: Text(
+                                  item.isActive ? 'Active' : 'Inactive',
+                                ),
                               ),
                               IconButton(
-                                onPressed: () => _openCreateOrEditGroup(group: item),
+                                onPressed: () =>
+                                    _openCreateOrEditGroup(group: item),
                                 icon: const Icon(Icons.edit_outlined),
                               ),
                               IconButton(
                                 onPressed: () async {
-                                  final refreshed = await Navigator.of(context).push<bool>(
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          FormTemplateChoiceGroupDetailPage(groupId: item.id),
-                                    ),
-                                  );
+                                  final refreshed = await Navigator.of(context)
+                                      .push<bool>(
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                              FormTemplateChoiceGroupDetailPage(
+                                                groupId: item.id,
+                                              ),
+                                        ),
+                                      );
                                   if (refreshed == true && mounted) {
                                     await _load();
                                   }
@@ -240,12 +248,15 @@ class _FormTemplateChoiceGroupListPageState
                             ],
                           ),
                           onTap: () async {
-                            final refreshed = await Navigator.of(context).push<bool>(
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    FormTemplateChoiceGroupDetailPage(groupId: item.id),
-                              ),
-                            );
+                            final refreshed = await Navigator.of(context)
+                                .push<bool>(
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        FormTemplateChoiceGroupDetailPage(
+                                          groupId: item.id,
+                                        ),
+                                  ),
+                                );
                             if (refreshed == true && mounted) {
                               await _load();
                             }
