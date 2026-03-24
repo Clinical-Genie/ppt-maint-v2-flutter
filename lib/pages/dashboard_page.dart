@@ -18,12 +18,24 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   bool _isLoadingAdmin = false;
   bool _isLoadingReviewer = false;
+  bool _isLoadingOperational = false;
   AdminPingResult _adminPing = AdminPingResult();
   SessionList _adminSessions = SessionList();
-  Map<String, dynamic> _adminUsers = {};
+  UserList _adminUsers = UserList();
   AdminEmailLogList _adminEmailLogs = AdminEmailLogList();
   WorkOrderList _reviewPendingSignature = WorkOrderList();
   WorkOrderList _reviewSignedEdited = WorkOrderList();
+  int _managerTotalToComplete = 0;
+  int _managerNewToday = 0;
+  int _managerUnpicked = 0;
+  int _managerPendingApproval = 0;
+  List<_BreakdownItem> _managerPendingByEngineer = const [];
+  List<_BreakdownItem> _managerByHospital = const [];
+  int _engineerNewToday = 0;
+  int _engineerUnpicked = 0;
+  int _engineerMyPicked = 0;
+  int _engineerPlannedToday = 0;
+  List<_BreakdownItem> _engineerInterestedHospitals = const [];
 
   @override
   void initState() {
@@ -38,10 +50,22 @@ class _DashboardPageState extends State<DashboardPage> {
         _hasRole(user, 'REVIEWER') || _hasRole(user, 'MANAGER');
 
     if (hasAdminRole) {
-      await _loadAdminSection();
+      try {
+        await _loadAdminSection();
+      } catch (_) {}
     }
     if (hasReviewerRole) {
-      await _loadReviewerSection();
+      try {
+        await _loadReviewerSection();
+      } catch (_) {}
+    }
+    if (_hasRole(user, 'MANAGER') || _hasRole(user, 'ENGINEER')) {
+      try {
+        await _loadOperationalSection(
+          hasManagerRole: _hasRole(user, 'MANAGER'),
+          hasEngineerRole: _hasRole(user, 'ENGINEER'),
+        );
+      } catch (_) {}
     }
   }
 
@@ -51,26 +75,28 @@ class _DashboardPageState extends State<DashboardPage> {
     });
 
     try {
-      final results = await Future.wait<dynamic>([
-        ApiController.adminPing(),
-        ApiController.getActiveSessions(),
-        // ApiController.listUsers(includeInactive: true, limit: 100, offset: 0),
-        ApiController.listAdminEmailLogs(limit: 50, offset: 0),
-      ]);
+      final ping = await ApiController.adminPing().catchError(
+        (_) => AdminPingResult(),
+      );
+      final sessions = await ApiController.getActiveSessions().catchError(
+        (_) => SessionList(),
+      );
+      final users = await ApiController.listUsers(
+        includeInactive: true,
+        limit: 500,
+        offset: 0,
+      ).catchError((_) => UserList());
+      final emailLogs = await ApiController.listAdminEmailLogs(
+        limit: 50,
+        offset: 0,
+      ).catchError((_) => AdminEmailLogList());
 
       if (!mounted) return;
       setState(() {
-        _adminPing = results[0] is AdminPingResult
-            ? results[0] as AdminPingResult
-            : AdminPingResult();
-        _adminSessions = results[1] is SessionList
-            ? results[1] as SessionList
-            : SessionList();
-        // _adminUsers = Map<String, dynamic>.from(results[2] ?? {});
-        _adminUsers = {};
-        _adminEmailLogs = results[2] is AdminEmailLogList
-            ? results[2] as AdminEmailLogList
-            : AdminEmailLogList();
+        _adminPing = ping;
+        _adminSessions = sessions;
+        _adminUsers = users;
+        _adminEmailLogs = emailLogs;
       });
     } finally {
       if (mounted) {
@@ -87,20 +113,143 @@ class _DashboardPageState extends State<DashboardPage> {
     });
 
     try {
-      final results = await Future.wait<WorkOrderList>([
-        ApiController.listWorkOrders(tab: 'pending_signature', pageSize: 50),
-        ApiController.listWorkOrders(tab: 'signed_edited', pageSize: 50),
-      ]);
+      final pendingSignature = await ApiController.listWorkOrders(
+        status: 'completed',
+        pageSize: 50,
+      ).catchError((_) => WorkOrderList());
+      final signedEdited = await ApiController.listWorkOrders(
+        status: 'signed_edited',
+        pageSize: 50,
+      ).catchError((_) => WorkOrderList());
 
       if (!mounted) return;
       setState(() {
-        _reviewPendingSignature = results[0];
-        _reviewSignedEdited = results[1];
+        _reviewPendingSignature = pendingSignature;
+        _reviewSignedEdited = signedEdited;
       });
     } finally {
       if (mounted) {
         setState(() {
           _isLoadingReviewer = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadOperationalSection({
+    required bool hasManagerRole,
+    required bool hasEngineerRole,
+  }) async {
+    setState(() {
+      _isLoadingOperational = true;
+    });
+
+    final today = DateTime.now();
+    final todayStart = DateTime.utc(today.year, today.month, today.day);
+    final todayEnd = DateTime.utc(
+      today.year,
+      today.month,
+      today.day,
+      23,
+      59,
+      59,
+    );
+    final todayText =
+        '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+
+    try {
+      WorkOrderList managerOpenSource = WorkOrderList();
+      WorkOrderList engineerSource = WorkOrderList();
+
+      if (hasManagerRole) {
+        final totalToComplete = await ApiController.listWorkOrders(
+          status: 'assigned,planned,working,cannot_completed,completed',
+          pageSize: 1,
+        ).catchError((_) => WorkOrderList());
+        final newToday = await ApiController.listWorkOrders(
+          haCreatedFrom: todayStart.toIso8601String(),
+          haCreatedTo: todayEnd.toIso8601String(),
+          pageSize: 1,
+        ).catchError((_) => WorkOrderList());
+        final unpicked = await ApiController.listWorkOrders(
+          status: 'unassigned',
+          pageSize: 1,
+        ).catchError((_) => WorkOrderList());
+        final pendingApproval = await ApiController.listWorkOrders(
+          status: 'signed,signed_edited',
+          pageSize: 1,
+        ).catchError((_) => WorkOrderList());
+        managerOpenSource = await ApiController.listWorkOrders(
+          status: 'assigned,planned,working,cannot_completed,completed',
+          pageSize: 500,
+        ).catchError((_) => WorkOrderList());
+        if (!mounted) return;
+        setState(() {
+          _managerTotalToComplete = totalToComplete.total;
+          _managerNewToday = newToday.total;
+          _managerUnpicked = unpicked.total;
+          _managerPendingApproval = pendingApproval.total;
+          _managerPendingByEngineer = _buildBreakdownItems(
+            managerOpenSource.items,
+            (item) => item.ownerFullName.isNotEmpty
+                ? item.ownerFullName
+                : (item.ownerUserId.isNotEmpty
+                      ? item.ownerUserId
+                      : 'Unassigned'),
+          );
+          _managerByHospital = _buildBreakdownItems(
+            managerOpenSource.items,
+            (item) => item.institutionCodeOrFromLocation.isNotEmpty
+                ? item.institutionCodeOrFromLocation
+                : 'Unknown',
+          );
+        });
+      }
+
+      if (hasEngineerRole) {
+        final newToday = await ApiController.listWorkOrders(
+          haCreatedFrom: todayStart.toIso8601String(),
+          haCreatedTo: todayEnd.toIso8601String(),
+          pageSize: 1,
+        ).catchError((_) => WorkOrderList());
+        final unpicked = await ApiController.listWorkOrders(
+          status: 'unassigned',
+          pageSize: 1,
+        ).catchError((_) => WorkOrderList());
+        final myPicked = await ApiController.listWorkOrders(
+          user: 'me',
+          status: 'assigned,planned,working,cannot_completed,completed',
+          pageSize: 1,
+        ).catchError((_) => WorkOrderList());
+        final plannedToday = await ApiController.listWorkOrders(
+          user: 'me',
+          status: 'planned',
+          plannedDate: todayText,
+          pageSize: 1,
+        ).catchError((_) => WorkOrderList());
+        engineerSource = await ApiController.listWorkOrders(
+          user: 'me',
+          status: 'assigned,planned,working,cannot_completed,completed',
+          pageSize: 500,
+        ).catchError((_) => WorkOrderList());
+        if (!mounted) return;
+        setState(() {
+          _engineerNewToday = newToday.total;
+          _engineerUnpicked = unpicked.total;
+          _engineerMyPicked = myPicked.total;
+          _engineerPlannedToday = plannedToday.total;
+          _engineerInterestedHospitals = _buildBreakdownItems(
+            engineerSource.items,
+            (item) => item.institutionCodeOrFromLocation.isNotEmpty
+                ? item.institutionCodeOrFromLocation
+                : 'Unknown',
+          );
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingOperational = false;
         });
       }
     }
@@ -132,6 +281,9 @@ class _DashboardPageState extends State<DashboardPage> {
     if (payload is SessionList) {
       return payload.items.map((session) => session.toJson()).toList();
     }
+    if (payload is UserList) {
+      return payload.items.map((user) => user.toJson()).toList();
+    }
     if (payload is AdminEmailLogList) {
       return payload.items.map((log) => log.raw).toList();
     }
@@ -161,11 +313,11 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   ({int active, int inactive}) _extractUserStatusSummary() {
-    final users = _extractItems(_adminUsers);
+    final users = _adminUsers.items;
     int active = 0;
     int inactive = 0;
     for (final user in users) {
-      if (user['is_active'] == true) {
+      if (user.isActive) {
         active++;
       } else {
         inactive++;
@@ -179,6 +331,30 @@ class _DashboardPageState extends State<DashboardPage> {
     return logs.where((log) => '${log['status']}' == status).length;
   }
 
+  List<_BreakdownItem> _buildBreakdownItems(
+    List<WorkOrder> items,
+    String Function(WorkOrder) keySelector,
+  ) {
+    final counts = <String, int>{};
+    for (final item in items) {
+      final key = keySelector(item).trim();
+      if (key.isEmpty) continue;
+      counts.update(key, (value) => value + 1, ifAbsent: () => 1);
+    }
+
+    final entries = counts.entries.toList()
+      ..sort((a, b) {
+        final byCount = b.value.compareTo(a.value);
+        if (byCount != 0) return byCount;
+        return a.key.toLowerCase().compareTo(b.key.toLowerCase());
+      });
+
+    return entries
+        .take(5)
+        .map((entry) => _BreakdownItem(label: entry.key, value: entry.value))
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = LoginSessionController.instance;
@@ -187,9 +363,11 @@ class _DashboardPageState extends State<DashboardPage> {
     final hasEngineerRole = _hasRole(user, 'ENGINEER');
     final hasAdminRole = _hasRole(user, 'ADMIN');
     final hasReviewerRole = _hasRole(user, 'REVIEWER');
-    final metrics = _DashboardMetrics.fromUser(user, session.username);
     final adminUserSummary = _extractUserStatusSummary();
-    final reviewerQueueItems = _extractItems(_reviewPendingSignature);
+    final reviewerQueueItems = [
+      ..._extractItems(_reviewPendingSignature),
+      ..._extractItems(_reviewSignedEdited),
+    ];
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F7FB),
@@ -254,30 +432,35 @@ class _DashboardPageState extends State<DashboardPage> {
                         ),
                       ),
                     if (hasManagerRole) const SizedBox(height: 18),
+                    if (hasManagerRole && _isLoadingOperational)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 16),
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
                     if (hasManagerRole)
                       _StatGrid(
                         items: [
                           _StatItem(
                             title: 'Work Orders To Complete',
-                            value: metrics.totalToComplete.toString(),
+                            value: _managerTotalToComplete.toString(),
                             icon: Icons.assignment_turned_in_outlined,
                             color: const Color(0xFF0F766E),
                           ),
                           _StatItem(
                             title: 'New Work Orders Today',
-                            value: metrics.newToday.toString(),
+                            value: _managerNewToday.toString(),
                             icon: Icons.fiber_new_outlined,
                             color: const Color(0xFF2563EB),
                           ),
                           _StatItem(
                             title: 'Unpicked Work Orders',
-                            value: metrics.unpicked.toString(),
+                            value: _managerUnpicked.toString(),
                             icon: Icons.assignment_late_outlined,
                             color: const Color(0xFFDC2626),
                           ),
                           _StatItem(
                             title: 'Pending Approval',
-                            value: metrics.pendingApproval.toString(),
+                            value: _managerPendingApproval.toString(),
                             icon: Icons.approval_outlined,
                             color: const Color(0xFFCA8A04),
                           ),
@@ -295,7 +478,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             title: 'Pending By Engineer',
                             subtitle:
                                 'Open work orders currently assigned but not completed',
-                            items: metrics.pendingByEngineer,
+                            items: _managerPendingByEngineer,
                             width: isWide ? 420 : constraints.maxWidth,
                             icon: Icons.engineering_outlined,
                           ),
@@ -303,7 +486,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             title: 'Work Orders By Hospital',
                             subtitle:
                                 'Current workload distribution across hospitals',
-                            items: metrics.byHospital,
+                            items: _managerByHospital,
                             width: isWide ? 420 : constraints.maxWidth,
                             icon: Icons.local_hospital_outlined,
                           ),
@@ -344,30 +527,35 @@ class _DashboardPageState extends State<DashboardPage> {
                         ),
                       ),
                     if (hasEngineerRole) const SizedBox(height: 18),
+                    if (hasEngineerRole && _isLoadingOperational)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 16),
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
                     if (hasEngineerRole)
                       _StatGrid(
                         items: [
                           _StatItem(
                             title: 'New Work Orders Today',
-                            value: metrics.newToday.toString(),
+                            value: _engineerNewToday.toString(),
                             icon: Icons.fiber_new_outlined,
                             color: const Color(0xFF2563EB),
                           ),
                           _StatItem(
                             title: 'Unpicked Work Orders',
-                            value: metrics.unpicked.toString(),
+                            value: _engineerUnpicked.toString(),
                             icon: Icons.assignment_late_outlined,
                             color: const Color(0xFFDC2626),
                           ),
                           _StatItem(
                             title: 'My Picked Orders',
-                            value: metrics.myPicked.toString(),
+                            value: _engineerMyPicked.toString(),
                             icon: Icons.handyman_outlined,
                             color: const Color(0xFF7C3AED),
                           ),
                           _StatItem(
                             title: 'Planned For Today',
-                            value: metrics.plannedToday.toString(),
+                            value: _engineerPlannedToday.toString(),
                             icon: Icons.today_outlined,
                             color: const Color(0xFFEA580C),
                           ),
@@ -385,7 +573,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             title: 'Interested Hospitals',
                             subtitle:
                                 'Work orders from hospitals you follow closely',
-                            items: metrics.interestedHospitals,
+                            items: _engineerInterestedHospitals,
                             width: isWide ? 420 : constraints.maxWidth,
                             icon: Icons.location_city_outlined,
                           ),

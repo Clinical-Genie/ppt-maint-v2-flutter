@@ -11,6 +11,7 @@ import 'package:maintapp/pages/shared/app_drawer.dart';
 import 'package:maintapp/pages/transfer_request_list_page.dart';
 import 'package:maintapp/pages/work_order_detail_page.dart';
 import 'package:maintapp/pages/work_order_email_history_page.dart';
+import 'package:maintapp/pages/work_order_report_pages.dart';
 import 'package:maintapp/state/app_state.dart';
 import 'package:maintapp/state/login_session_controller.dart';
 
@@ -31,35 +32,22 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
   bool _syncingHorizontalTableScroll = false;
 
   final List<String> _workOrderTypes = const ['CM', 'PM'];
-  final List<String> _statusOptions = const [
-    'unassigned',
-    'assigned',
-    'planned',
-    'working',
-    'completed',
-    'cannot_completed',
-    'signed',
-    'signed_edited',
-    'approved',
-    'email_sent',
-    'cancelled',
-  ];
+
   int _activeTypeIndex = 0;
   final List<WorkOrder> _items = [];
   List<UserInfo> _activeEngineers = [];
   List<UserInfo> _allUsers = [];
 
   bool _isLoading = false;
-  bool _isLoadingUsers = false;
+  // bool _isLoadingUsers = false;
   bool _useCardView = false;
   bool _includeInactiveEngineers = false;
-  bool _showCompactEngineerFilters = false;
-  bool _showCompactManagerFilters = false;
-  bool _showDetailedSearch = false;
+  bool _showMobileFilters = false;
   static const double _cardModeWidthBreakpoint = 680.0;
-  static const int _pageSize = 20;
+  static const int _pageSize = 100;
   String _selectedInstitutionCode = '';
-  String _engineerTab = 'unassigned';
+  String _selectedPool = 'public_pool';
+  String _selectedGroup = 'picked';
   String? _selectedEngineerId;
   List<String> _selectedStatuses = [];
   DateTime? _plannedDateFilter;
@@ -119,7 +107,8 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       }
     }
 
-    setState(() => _isLoadingUsers = true);
+    // setState(() => _isLoadingUsers = true);
+    setState(() {});
     try {
       List<UserInfo> activeEngineers = await ApiController.listUsers(
         role: 'ENGINEER',
@@ -166,40 +155,38 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       );
     } finally {
       if (mounted) {
-        setState(() => _isLoadingUsers = false);
+        // setState(() => _isLoadingUsers = false);
+        setState(() {});
       }
     }
   }
 
   Future<void> _loadWorkOrders() async {
     setState(() => _isLoading = true);
-    final currentUser = LoginSessionController.instance.userInfo;
-    final hasEngineerRole = _hasRole(currentUser, 'ENGINEER');
-    final hasManagerRole =
-        _hasRole(currentUser, 'MANAGER') || _hasRole(currentUser, 'ADMIN');
-    String? tabFilter;
+    String? userFilter;
     String? ownerFilter;
     String? plannedDateFilter;
     String? haOutboundFrom;
     String? haOutboundTo;
 
-    if (hasEngineerRole) {
-      tabFilter = _engineerTab;
-      if (_engineerTab == 'picked_by_others' &&
-          _selectedEngineerId != null &&
-          _selectedEngineerId!.isNotEmpty) {
-        ownerFilter = _selectedEngineerId;
-      }
-      if (_engineerTab == 'planned' && _plannedDateFilter != null) {
-        plannedDateFilter = _dateText(_plannedDateFilter);
-      }
-    } else if (hasManagerRole) {
-      if (_selectedEngineerId != null && _selectedEngineerId!.isNotEmpty) {
-        ownerFilter = _selectedEngineerId;
-      }
+    if (_selectedPool == 'my_wos') {
+      userFilter = 'me';
+    } else if (_selectedPool == 'others_wos') {
+      userFilter = 'others';
     }
 
-    final statusFilter = _selectedStatuses.join(',');
+    if (_showEngineerFilter &&
+        _selectedEngineerId != null &&
+        _selectedEngineerId!.isNotEmpty) {
+      ownerFilter = _selectedEngineerId;
+    }
+
+    if (_showPlannedDate && _plannedDateFilter != null) {
+      plannedDateFilter = _dateText(_plannedDateFilter);
+    }
+
+    final effectiveStatuses = _effectiveStatusesForQuery;
+    final statusFilter = effectiveStatuses.join(',');
     if (_haOutboundRange != null) {
       final start = _haOutboundRange!.start;
       final end = _haOutboundRange!.end;
@@ -224,7 +211,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     try {
       final payload = await ApiController.listWorkOrders(
         woType: _activeType,
-        tab: tabFilter,
+        user: userFilter,
         page: _currentPage,
         pageSize: _pageSize,
         institution: _selectedInstitutionCode.isEmpty
@@ -246,13 +233,10 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         haOutboundTo: haOutboundTo,
       );
       if (!mounted) return;
-      final loadedItems = hasEngineerRole && _engineerTab == 'picked_by_others'
-          ? payload.items.where((item) => item.ownerUserId != _userId).toList()
-          : payload.items;
       setState(() {
         _items
           ..clear()
-          ..addAll(loadedItems);
+          ..addAll(payload.items);
         _totalItems = payload.total;
         _currentOffset = payload.offset;
       });
@@ -305,6 +289,230 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     _loadWorkOrders();
   }
 
+  bool get _hasEngineerRole =>
+      _hasRole(LoginSessionController.instance.userInfo, 'ENGINEER');
+
+  bool get _hasManagerRole =>
+      _hasRole(LoginSessionController.instance.userInfo, 'MANAGER');
+
+  bool get _usesEngineerPools => _hasEngineerRole;
+
+  bool get _isPublicPool => _selectedPool == 'public_pool';
+
+  bool get _showEngineerFilter =>
+      !_isPublicPool &&
+      ((_usesEngineerPools && _selectedPool == 'others_wos') ||
+          (!_usesEngineerPools && _selectedPool == 'picked_wos'));
+
+  bool get _showPlannedDate => _selectedGroup == 'scheduled';
+
+  List<String> get _allowedStatusesForCurrentContext {
+    if (_isPublicPool) {
+      return const ['unassigned'];
+    }
+
+    if (_usesEngineerPools) {
+      switch (_selectedGroup) {
+        case 'picked':
+          return const ['assigned', 'cannot_completed'];
+        case 'scheduled':
+          return const ['planned'];
+        case 'working':
+          return const ['working'];
+        case 'need_sign':
+          return const ['completed'];
+        case 'ended':
+          return const ['signed', 'signed_edited', 'approved', 'email_sent'];
+        case 'cancelled':
+          return const ['cancelled'];
+        case 'all':
+        default:
+          return const [
+            'assigned',
+            'planned',
+            'working',
+            'completed',
+            'cannot_completed',
+            'signed',
+            'signed_edited',
+            'approved',
+            'email_sent',
+          ];
+      }
+    }
+
+    switch (_selectedGroup) {
+      case 'picked':
+        return const ['assigned', 'planned', 'cannot_completed'];
+      case 'working':
+        return const ['working', 'completed'];
+      case 'need_approve':
+        return const ['signed', 'signed_edited'];
+      case 'need_send_email':
+        return const ['approved'];
+      case 'ended':
+        return const ['email_sent'];
+      case 'cancelled':
+        return const ['cancelled'];
+      case 'all':
+      default:
+        return const [
+          'assigned',
+          'planned',
+          'working',
+          'completed',
+          'cannot_completed',
+          'signed',
+          'signed_edited',
+          'approved',
+          'email_sent',
+        ];
+    }
+  }
+
+  List<String> get _effectiveStatusesForQuery {
+    if (_selectedStatuses.isNotEmpty) {
+      return _selectedStatuses
+          .where(_allowedStatusesForCurrentContext.contains)
+          .toList();
+    }
+    return _allowedStatusesForCurrentContext;
+  }
+
+  bool get _showStatusFilter => _allowedStatusesForCurrentContext.length > 1;
+
+  List<(String, String)> get _poolOptions {
+    if (_usesEngineerPools) {
+      return const [
+        ('public_pool', 'Public Pool'),
+        ('my_wos', 'My WOs'),
+        ('others_wos', "Other's WOs"),
+      ];
+    }
+    return const [('public_pool', 'Public Pool'), ('picked_wos', 'Picked WOs')];
+  }
+
+  List<(String, String)> get _groupOptions {
+    if (_isPublicPool) return const [];
+    if (_usesEngineerPools) {
+      return const [
+        ('picked', 'Picked'),
+        ('scheduled', 'Scheduled'),
+        ('working', 'Working'),
+        ('need_sign', 'Need sign'),
+        ('ended', 'Ended'),
+        ('all', 'All'),
+        ('cancelled', 'Cancelled'),
+      ];
+    }
+    return const [
+      ('picked', 'Picked'),
+      ('working', 'Working'),
+      ('need_approve', 'Need approve'),
+      ('need_send_email', 'Need send email'),
+      ('ended', 'Ended'),
+      ('all', 'All'),
+      ('cancelled', 'Cancelled'),
+    ];
+  }
+
+  String _defaultGroupForPool(String pool) {
+    if (pool == 'public_pool') {
+      return '';
+    } else if (pool == 'others_wos') {
+      return 'all';
+    }
+    return 'picked';
+  }
+
+  String _poolLabel(String value) {
+    for (final item in _poolOptions) {
+      if (item.$1 == value) return item.$2;
+    }
+    return value;
+  }
+
+  String _groupLabel(String value) {
+    for (final item in _groupOptions) {
+      if (item.$1 == value) return item.$2;
+    }
+    return value;
+  }
+
+  String get _mobileSelectionSummary {
+    final pool = _poolLabel(_selectedPool);
+    if (_groupOptions.isEmpty || _selectedGroup.isEmpty) {
+      return pool;
+    }
+    return '$pool - ${_groupLabel(_selectedGroup)}';
+  }
+
+  String get _selectionSummary => _mobileSelectionSummary;
+
+  String get _mobileFilterSummary {
+    final parts = <String>[];
+    if (_selectedInstitutionCode.isNotEmpty) {
+      parts.add(_selectedInstitutionCode);
+    }
+    if (_selectedStatuses.isNotEmpty) {
+      parts.add(_selectedStatuses.join(', '));
+    }
+    if (_showEngineerFilter &&
+        _selectedEngineerId != null &&
+        _selectedEngineerId!.isNotEmpty) {
+      String engineerName = 'Engineer selected';
+      for (final engineer in _engineersForFilter) {
+        if (engineer.id == _selectedEngineerId) {
+          engineerName = _displayName(engineer);
+          break;
+        }
+      }
+      parts.add(engineerName);
+    }
+    if (_showPlannedDate && _plannedDateFilter != null) {
+      parts.add('Planned ${_dateText(_plannedDateFilter)}');
+    }
+    if (_woNoSearchController.text.trim().isNotEmpty) {
+      parts.add('WO ${_woNoSearchController.text.trim()}');
+    }
+    if (_assetNumberSearchController.text.trim().isNotEmpty) {
+      parts.add('Asset ${_assetNumberSearchController.text.trim()}');
+    }
+    if (_serialNumberSearchController.text.trim().isNotEmpty) {
+      parts.add('Serial ${_serialNumberSearchController.text.trim()}');
+    }
+    if (_haOutboundRange != null) {
+      parts.add(_dateRangeText(_haOutboundRange));
+    }
+    return parts.join(' • ');
+  }
+
+  void _onPoolChanged(String value) {
+    if (_selectedPool == value) return;
+    setState(() {
+      _selectedPool = value;
+      _selectedGroup = _defaultGroupForPool(value);
+      _selectedEngineerId = null;
+      _selectedStatuses = [];
+      _plannedDateFilter = null;
+      _currentPage = 1;
+    });
+    _loadWorkOrders();
+  }
+
+  void _onGroupChanged(String value) {
+    if (_selectedGroup == value) return;
+    setState(() {
+      _selectedGroup = value;
+      _selectedStatuses = [];
+      if (value != 'scheduled') {
+        _plannedDateFilter = null;
+      }
+      _currentPage = 1;
+    });
+    _loadWorkOrders();
+  }
+
   void _onEngineerChanged(String? engineerId) {
     final normalizedId = engineerId == null || engineerId.isEmpty
         ? null
@@ -330,19 +538,17 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     });
   }
 
-  void _applyStatusFilter() {
-    setState(() {
-      _currentPage = 1;
-    });
-    _loadWorkOrders();
-  }
-
   String _statusFilterSummary() {
-    if (_selectedStatuses.isEmpty) return 'All statuses';
+    if (_selectedStatuses.isEmpty) {
+      return _showStatusFilter
+          ? 'All in group'
+          : _allowedStatusesForCurrentContext.join(', ');
+    }
     return _selectedStatuses.join(', ');
   }
 
   Future<void> _openStatusFilterDialog() async {
+    final availableStatuses = _allowedStatusesForCurrentContext;
     final selected = Set<String>.from(_selectedStatuses);
     final result = await showDialog<List<String>>(
       context: context,
@@ -357,7 +563,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                   child: Wrap(
                     spacing: 8,
                     runSpacing: 8,
-                    children: _statusOptions.map((status) {
+                    children: availableStatuses.map((status) {
                       final isSelected = selected.contains(status);
                       return FilterChip(
                         label: Text(status),
@@ -421,36 +627,9 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     _applyInstitutionFilter(null);
   }
 
-  void _onEngineerTabChanged(String value) {
-    if (_engineerTab == value) return;
+  void _toggleMobileFilters() {
     setState(() {
-      _engineerTab = value;
-      if (value != 'picked_by_others') {
-        _selectedEngineerId = null;
-      }
-      if (value != 'planned') {
-        _plannedDateFilter = null;
-      }
-      _currentPage = 1;
-    });
-    _loadWorkOrders();
-  }
-
-  void _toggleCompactEngineerFilters() {
-    setState(() {
-      _showCompactEngineerFilters = !_showCompactEngineerFilters;
-    });
-  }
-
-  void _toggleCompactManagerFilters() {
-    setState(() {
-      _showCompactManagerFilters = !_showCompactManagerFilters;
-    });
-  }
-
-  void _toggleDetailedSearch() {
-    setState(() {
-      _showDetailedSearch = !_showDetailedSearch;
+      _showMobileFilters = !_showMobileFilters;
     });
   }
 
@@ -635,6 +814,19 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     return _formatDateTime(_effectiveCreatedAt(order));
   }
 
+  String _plannedScheduleDisplay(WorkOrder order) {
+    final rawPlannedDate = order.plannedDate.trim();
+    if (rawPlannedDate.isEmpty) return '';
+    final plannedDate = rawPlannedDate.contains('T')
+        ? rawPlannedDate.split('T').first.trim()
+        : rawPlannedDate;
+    final plannedHalfDay = order.plannedHalfDay.trim().toUpperCase();
+    if (plannedHalfDay == 'AM' || plannedHalfDay == 'PM') {
+      return '$plannedDate ($plannedHalfDay)';
+    }
+    return plannedDate;
+  }
+
   String _effectiveCreatedAt(WorkOrder order) {
     return order.haCreatedAt.isNotEmpty ? order.haCreatedAt : order.createdAt;
   }
@@ -657,13 +849,6 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     if (description.isNotEmpty) return description;
     if (remark.isNotEmpty) return 'Remark: $remark';
     return 'No description';
-  }
-
-  String _institutionFromLocation(String locationCode) {
-    final trimmed = locationCode.trim();
-    if (trimmed.isEmpty) return '-';
-    final dashIndex = trimmed.indexOf('-');
-    return dashIndex > 0 ? trimmed.substring(0, dashIndex) : trimmed;
   }
 
   DateTime? _parseDateTime(String dateTimeStr) {
@@ -761,12 +946,6 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
 
   TextStyle get _detailTextStyle =>
       const TextStyle(fontSize: 14, color: Color(0xFF334155));
-
-  TextStyle get _detailLabelStyle => const TextStyle(
-    fontSize: 14,
-    color: Color(0xFF334155),
-    fontWeight: FontWeight.w700,
-  );
 
   Widget _buildLocationDisplay(String locationCode) {
     if (locationCode.isEmpty) {
@@ -925,7 +1104,9 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     );
   }
 
-  Future<DateTime?> _promptDateTime(String title) async {
+  Future<({DateTime plannedDate, String plannedHalfDay})?> _promptSchedule(
+    String title,
+  ) async {
     final pickedDate = await showDatePicker(
       context: context,
       initialDate: DateTime.now(),
@@ -934,18 +1115,65 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       helpText: title,
     );
     if (pickedDate == null || !mounted) return null;
-    final pickedTime = await showTimePicker(
+
+    String selectedHalfDay = 'full_day';
+    final pickedHalfDay = await showDialog<String>(
       context: context,
-      initialTime: TimeOfDay.fromDateTime(DateTime.now()),
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              title: const Text('Schedule session'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  RadioListTile<String>(
+                    value: 'AM',
+                    groupValue: selectedHalfDay,
+                    title: const Text('AM'),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setStateDialog(() => selectedHalfDay = value);
+                    },
+                  ),
+                  RadioListTile<String>(
+                    value: 'PM',
+                    groupValue: selectedHalfDay,
+                    title: const Text('PM'),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setStateDialog(() => selectedHalfDay = value);
+                    },
+                  ),
+                  RadioListTile<String>(
+                    value: 'full_day',
+                    groupValue: selectedHalfDay,
+                    title: const Text('Full day'),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setStateDialog(() => selectedHalfDay = value);
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () =>
+                      Navigator.of(dialogContext).pop(selectedHalfDay),
+                  child: const Text('Confirm'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
-    if (pickedTime == null) return null;
-    return DateTime(
-      pickedDate.year,
-      pickedDate.month,
-      pickedDate.day,
-      pickedTime.hour,
-      pickedTime.minute,
-    );
+    if (pickedHalfDay == null || pickedHalfDay.isEmpty) return null;
+    return (plannedDate: pickedDate, plannedHalfDay: pickedHalfDay);
   }
 
   void _viewDetails(WorkOrder order, BuildContext rowContext) {
@@ -989,6 +1217,18 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         return;
       } else if (action == 'create_email_draft') {
         await _createEmailDraftForWorkOrder(order, rowContext);
+        return;
+      } else if (action == 'view_report') {
+        ScaffoldMessenger.of(rowContext).showSnackBar(
+          const SnackBar(content: Text('View Report page is not wired yet.')),
+        );
+        return;
+      } else if (action == 'send_email') {
+        ScaffoldMessenger.of(rowContext).showSnackBar(
+          const SnackBar(
+            content: Text('Multiple-select Send Email is not wired yet.'),
+          ),
+        );
         return;
       } else if (action == 'edit') {
         ScaffoldMessenger.of(rowContext).showSnackBar(
@@ -1043,12 +1283,49 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         if (reason == null || reason.isEmpty) return;
         feedback = await ApiController.releaseWorkOrder(order.id, reason);
       } else if (action == 'plan') {
-        final picked = await _promptDateTime('Schedule work order');
+        final picked = await _promptSchedule('Schedule work order');
         if (picked == null) return;
         feedback = await ApiController.planWorkOrder(
           order.id,
-          plannedDate: picked.toIso8601String().split('.').first,
+          plannedDate:
+              '${picked.plannedDate.year}-${picked.plannedDate.month.toString().padLeft(2, '0')}-${picked.plannedDate.day.toString().padLeft(2, '0')}',
+          plannedHalfDay: picked.plannedHalfDay == 'full_day'
+              ? null
+              : picked.plannedHalfDay,
         );
+      } else if (action == 'cannot_complete') {
+        final reason = await _promptReason('Cannot complete reason');
+        if (reason == null || reason.isEmpty) return;
+        feedback = await ApiController.markWorkOrderCannotCompleted(
+          order.id,
+          reason,
+        );
+      } else if (action == 'fill_report') {
+        if (order.woType.trim().toUpperCase() != 'CM') {
+          ScaffoldMessenger.of(rowContext).showSnackBar(
+            const SnackBar(content: Text('Only CM report is wired now.')),
+          );
+          return;
+        }
+        final updated = await Navigator.of(rowContext).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => WorkOrderReportFormPage(workOrder: order),
+          ),
+        );
+        if (updated == true) {
+          await _loadWorkOrders();
+        }
+        return;
+      } else if (action == 'sign') {
+        final updated = await Navigator.of(rowContext).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => WorkOrderSignPage(workOrder: order),
+          ),
+        );
+        if (updated == true) {
+          await _loadWorkOrders();
+        }
+        return;
       } else if (action == 'start') {
         feedback = await ApiController.startWorkOrder(order.id);
       } else {
@@ -1090,55 +1367,115 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     // );
 
     if (hasManagerRole) {
-      // items.add(const PopupMenuItem(value: 'edit', child: Text('Edit')));
-      items.add(
-        const PopupMenuItem(
-          value: 'create_email_draft',
-          child: Text('Create email draft'),
-        ),
-      );
-      items.add(
-        const PopupMenuItem(
-          value: 'assign_to_engineer',
-          child: Text('Assign to engineer'),
-        ),
-      );
-      if (!_isUnassigned(order)) {
+      final normalizedStatus = order.status.trim().toLowerCase();
+      if (_isUnassigned(order) || normalizedStatus == 'unassigned') {
+        items.add(
+          const PopupMenuItem(
+            value: 'assign_to_engineer',
+            child: Text('Assign to engineer'),
+          ),
+        );
+      } else if (normalizedStatus == 'assigned' ||
+          normalizedStatus == 'planned' ||
+          normalizedStatus == 'cannot_completed') {
+        items.add(
+          const PopupMenuItem(
+            value: 'assign_to_engineer',
+            child: Text('Assign to engineer'),
+          ),
+        );
         items.add(
           const PopupMenuItem(
             value: 'revoke_to_unassigned',
             child: Text('Return to public pool'),
           ),
         );
+      } else if (normalizedStatus == 'signed' ||
+          normalizedStatus == 'signed_edited') {
+        items.add(
+          const PopupMenuItem(value: 'view_report', child: Text('View Report')),
+        );
+      } else if (normalizedStatus == 'approved') {
+        items.add(
+          const PopupMenuItem(value: 'send_email', child: Text('Send email')),
+        );
       }
     }
 
     if (hasEngineerRole) {
+      final normalizedStatus = order.status.trim().toLowerCase();
+
       if (_isUnassigned(order)) {
         items.add(const PopupMenuItem(value: 'take', child: Text('Take it')));
       } else if (_isMine(order)) {
-        items.add(const PopupMenuItem(value: 'plan', child: Text('Schedule')));
-        items.add(
-          const PopupMenuItem(value: 'start', child: Text('Start work')),
-        );
-        items.add(
-          const PopupMenuItem(value: 'transfer_away', child: Text('Hand off')),
-        );
-        if (!hasManagerRole) {
+        if (normalizedStatus == 'assigned' ||
+            normalizedStatus == 'cannot_completed') {
+          items.add(
+            const PopupMenuItem(value: 'plan', child: Text('Schedule')),
+          );
+          items.add(
+            const PopupMenuItem(value: 'start', child: Text('Start work')),
+          );
           items.add(
             const PopupMenuItem(
-              value: 'release_to_unassigned',
-              child: Text('Return to public pool'),
+              value: 'transfer_away',
+              child: Text('Hand off'),
+            ),
+          );
+          if (!hasManagerRole) {
+            items.add(
+              const PopupMenuItem(
+                value: 'release_to_unassigned',
+                child: Text('Return to public pool'),
+              ),
+            );
+          }
+        } else if (normalizedStatus == 'planned') {
+          items.add(
+            const PopupMenuItem(value: 'plan', child: Text('Re-schedule')),
+          );
+          items.add(
+            const PopupMenuItem(value: 'start', child: Text('Start work')),
+          );
+          items.add(
+            const PopupMenuItem(
+              value: 'transfer_away',
+              child: Text('Hand off'),
+            ),
+          );
+          if (!hasManagerRole) {
+            items.add(
+              const PopupMenuItem(
+                value: 'release_to_unassigned',
+                child: Text('Return to public pool'),
+              ),
+            );
+          }
+        } else if (normalizedStatus == 'working') {
+          items.add(
+            const PopupMenuItem(
+              value: 'fill_report',
+              child: Text('Fill report'),
+            ),
+          );
+          items.add(
+            const PopupMenuItem(
+              value: 'cannot_complete',
+              child: Text('Cannot complete'),
+            ),
+          );
+        } else if (normalizedStatus == 'completed') {
+          items.add(const PopupMenuItem(value: 'sign', child: Text('Sign')));
+        }
+      } else if (_isAssignedToOthers(order)) {
+        if (normalizedStatus == 'assigned' || normalizedStatus == 'planned') {
+          items.add(
+            const PopupMenuItem(
+              value: 'transfer_to_me',
+              child: Text('Take over'),
             ),
           );
         }
-      } else if (_isAssignedToOthers(order)) {
-        items.add(
-          const PopupMenuItem(
-            value: 'transfer_to_me',
-            child: Text('Take over'),
-          ),
-        );
       }
     }
 
@@ -1288,42 +1625,6 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     );
   }
 
-  Widget _buildOwnerChip(WorkOrder order) {
-    if (order.status.toLowerCase() == 'cancelled') {
-      return const Chip(
-        label: Text('Cancelled'),
-        backgroundColor: Color.fromARGB(255, 135, 5, 5),
-        side: BorderSide(color: Color(0xFFFECACA)),
-        labelStyle: TextStyle(
-          color: Color.fromARGB(255, 211, 211, 211),
-          fontWeight: FontWeight.w600,
-          fontSize: 12,
-        ),
-      );
-    } else if (order.ownerUserId.isEmpty) {
-      return const Chip(
-        label: Text('Unassigned'),
-        backgroundColor: Color(0xFFFEE2E2),
-        side: BorderSide(color: Color(0xFFFECACA)),
-        labelStyle: TextStyle(
-          color: Color(0xFF991B1B),
-          fontWeight: FontWeight.w600,
-          fontSize: 12,
-        ),
-      );
-    } else {
-      return Chip(
-        label: Text(_ownerDisplayName(order)),
-        backgroundColor: const Color(0xFFDBEAFE),
-        side: const BorderSide(color: Color(0xFFBFDBFE)),
-        labelStyle: const TextStyle(
-          color: Color(0xFF1D4ED8),
-          fontWeight: FontWeight.w600,
-        ),
-      );
-    }
-  }
-
   Widget _buildStatusChip(WorkOrder order) {
     final status = order.status.trim();
     final normalized = status.toLowerCase();
@@ -1399,6 +1700,19 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                 fontSize: 12,
               ),
             ),
+            if (normalized == 'planned' &&
+                _plannedScheduleDisplay(order).isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  _plannedScheduleDisplay(order),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF475569),
+                  ),
+                ),
+              ),
             if (_isPendingTransfer(order))
               const Padding(
                 padding: EdgeInsets.only(top: 4),
@@ -1573,6 +1887,30 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                       ],
                       const SizedBox(height: 8),
                       _buildLocationDisplay(item.locationCode),
+                      if (item.status.trim().toLowerCase() == 'planned' &&
+                          _plannedScheduleDisplay(item).isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.event_note_outlined,
+                              size: 16,
+                              color: Color(0xFF334155),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: SelectableText(
+                                _plannedScheduleDisplay(item),
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: Color(0xFF334155),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                       const SizedBox(height: 6),
                       Row(
                         children: [
@@ -1983,7 +2321,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
   }
 
   Widget _buildEngineerDropdown(double width, {required bool enabled}) {
-    final dropdownEngineers = _engineerTab == 'picked_by_others'
+    final dropdownEngineers = _selectedPool == 'others_wos'
         ? _engineersForFilter
               .where((engineer) => engineer.id != _userId)
               .toList()
@@ -2074,29 +2412,6 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         _serialNumberSearchController.text.trim().isNotEmpty ||
         _haOutboundRange != null;
 
-    final toggleDetailButton = SizedBox(
-      height: 40,
-      child: TextButton.icon(
-        onPressed: _toggleDetailedSearch,
-        style: TextButton.styleFrom(
-          visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        icon: Icon(
-          _showDetailedSearch
-              ? Icons.keyboard_arrow_up
-              : Icons.keyboard_arrow_down,
-          size: 18,
-        ),
-        label: Text(
-          _showDetailedSearch ? 'hide' : 'more search options',
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
-
     final content = useCompactLayout
         ? Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2165,8 +2480,8 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                 child: const Text('Clear'),
               ),
 
-              const SizedBox(height: 12),
-              toggleDetailButton,
+              // const SizedBox(height: 12),
+              // toggleDetailButton,
             ],
           );
 
@@ -2217,148 +2532,125 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
   //   );
   // }
 
-  Widget _buildManagerFilters(bool useCompactLayout) {
-    final toggleDetailButton = SizedBox(
-      height: 40,
-      child: TextButton.icon(
-        onPressed: _toggleDetailedSearch,
-        style: TextButton.styleFrom(
-          visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        icon: Icon(
-          _showDetailedSearch
-              ? Icons.keyboard_arrow_up
-              : Icons.keyboard_arrow_down,
-          size: 18,
-        ),
-        label: Text(
-          _showDetailedSearch ? 'hide' : 'more search options',
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
-
-    final toggleManagerButton = Align(
-      alignment: Alignment.center,
-      child: TextButton.icon(
-        onPressed: _toggleCompactManagerFilters,
-        style: TextButton.styleFrom(
-          visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        icon: Icon(
-          _showCompactManagerFilters
-              ? Icons.keyboard_arrow_up
-              : Icons.keyboard_arrow_down,
-          size: 18,
-        ),
-        label: Text(
-          _showCompactManagerFilters ? 'hide' : 'search',
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
-
-    final mainContent = useCompactLayout
-        ? Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (!_showCompactManagerFilters) toggleManagerButton,
-              if (_showCompactManagerFilters) ...[
-                _buildInstitutionAutocomplete(double.infinity),
-                const SizedBox(height: 12),
-                _buildEngineerDropdown(double.infinity, enabled: true),
-                const SizedBox(height: 4),
-                _buildIncludeInactiveEngineersCheckbox(),
-                const SizedBox(height: 12),
-                _buildStatusField(double.infinity),
-                const SizedBox(height: 4),
-              ],
-            ],
-          )
-        : Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              _buildInstitutionAutocomplete(260),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildEngineerDropdown(240, enabled: true),
-                  SizedBox(
-                    width: 220,
-                    child: _buildIncludeInactiveEngineersCheckbox(),
+  Widget _buildPoolSelector({required bool useCompactLayout}) {
+    final options = _poolOptions;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final veryCompact =
+        (useCompactLayout && screenWidth < 430) || screenWidth >= 1200;
+    if (useCompactLayout || screenWidth >= 1200) {
+      return Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: options
+            .map(
+              (item) => Tooltip(
+                message: item.$2,
+                child: ChoiceChip(
+                  label: veryCompact
+                      ? Icon(
+                          _poolIconForValue(item.$1),
+                          size: 16,
+                          color: _selectedPool == item.$1
+                              ? Colors.white
+                              : const Color(0xFF334155),
+                        )
+                      : Text(item.$2),
+                  selected: _selectedPool == item.$1,
+                  onSelected: (_) => _onPoolChanged(item.$1),
+                  selectedColor: const Color(0xFF0F766E),
+                  showCheckmark: false,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: const VisualDensity(
+                    horizontal: -2,
+                    vertical: -2,
                   ),
-                ],
+                  padding: EdgeInsets.symmetric(
+                    horizontal: veryCompact ? 6 : 8,
+                    vertical: 6,
+                  ),
+                  labelStyle: TextStyle(
+                    color: _selectedPool == item.$1
+                        ? Colors.white
+                        : const Color(0xFF334155),
+                    fontSize: veryCompact ? 11 : 12,
+                    fontWeight: _selectedPool == item.$1
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                  ),
+                ),
               ),
-              _buildStatusField(240),
-              if (!_showDetailedSearch) toggleDetailButton,
-            ],
-          );
+            )
+            .toList(),
+      );
+    }
 
-    final content = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        mainContent,
-        // const SizedBox(height: 4),
-        // _buildDetailedSearchToggle(),
-        if (!useCompactLayout && _showDetailedSearch ||
-            (useCompactLayout && _showCompactManagerFilters)) ...[
-          const SizedBox(height: 8),
-          _buildDetailedSearchContent(useCompactLayout),
-          if (useCompactLayout && _showCompactManagerFilters)
-            toggleManagerButton,
-        ],
-      ],
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: options
+          .map(
+            (item) => ChoiceChip(
+              label: Text(item.$2),
+              selected: _selectedPool == item.$1,
+              onSelected: (_) => _onPoolChanged(item.$1),
+              selectedColor: const Color(0xFF0F766E),
+              showCheckmark: false,
+              labelStyle: TextStyle(
+                color: _selectedPool == item.$1
+                    ? Colors.white
+                    : const Color(0xFF334155),
+                fontWeight: _selectedPool == item.$1
+                    ? FontWeight.w700
+                    : FontWeight.w500,
+              ),
+            ),
+          )
+          .toList(),
     );
-
-    return _buildQuickFilterContainer(title: 'Manager filters', child: content);
   }
 
-  Widget _buildEngineerFilters(bool useCompactLayout) {
-    const tabs = [
-      ('unassigned', 'Public pool'),
-      ('my_pickups', 'My work orders'),
-      ('planned', 'Scheduled'),
-      ('picked_by_others', 'Taken by others'),
-    ];
-    const compactTabIcons = <String, IconData>{
-      'unassigned': Icons.move_to_inbox_outlined,
-      'my_pickups': Icons.assignment_ind_outlined,
-      'planned': Icons.event_note_outlined,
-      'picked_by_others': Icons.people_alt_outlined,
-    };
-    final currentCompactTabLabel = tabs
-        .firstWhere((item) => item.$1 == _engineerTab, orElse: () => tabs.first)
-        .$2;
-    final showEngineerDropdown = _engineerTab == 'picked_by_others';
-    final showPlannedDate = _engineerTab == 'planned';
-    final showStatusFilter = _engineerTab != 'unassigned';
-
-    final tabToggle = ToggleButtons(
-      isSelected: tabs.map((item) => item.$1 == _engineerTab).toList(),
-      onPressed: (index) => _onEngineerTabChanged(tabs[index].$1),
-      constraints: const BoxConstraints(minHeight: 34, minWidth: 88),
-      borderRadius: BorderRadius.circular(12),
-      color: const Color(0xFF334155),
-      selectedColor: Colors.white,
-      fillColor: const Color(0xFF0F766E),
-      selectedBorderColor: const Color(0xFF0F766E),
-      borderColor: const Color(0xFFCBD5E1),
-      children: tabs
+  Widget _buildGroupSelector() {
+    final options = _groupOptions;
+    if (options.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final screenWidth = MediaQuery.of(context).size.width;
+    final veryCompact = screenWidth < 430 || screenWidth >= 1200;
+    return Wrap(
+      spacing: veryCompact ? 4 : 6,
+      runSpacing: veryCompact ? 4 : 6,
+      children: options
           .map(
-            (item) => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: Text(
-                item.$2,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: item.$1 == _engineerTab
+            (item) => Tooltip(
+              message: item.$2,
+              child: ChoiceChip(
+                label: veryCompact
+                    ? Icon(
+                        _groupIconForValue(item.$1),
+                        size: 14,
+                        color: _selectedGroup == item.$1
+                            ? Colors.white
+                            : const Color(0xFF334155),
+                      )
+                    : Text(item.$2),
+                selected: _selectedGroup == item.$1,
+                onSelected: (_) => _onGroupChanged(item.$1),
+                selectedColor: const Color(0xFF2563EB),
+                showCheckmark: false,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: veryCompact
+                    ? const VisualDensity(horizontal: -3, vertical: -3)
+                    : const VisualDensity(horizontal: -2, vertical: -2),
+                padding: EdgeInsets.symmetric(
+                  horizontal: veryCompact ? 4 : 8,
+                  vertical: veryCompact ? 4 : 6,
+                ),
+                labelStyle: TextStyle(
+                  color: _selectedGroup == item.$1
+                      ? Colors.white
+                      : const Color(0xFF334155),
+                  fontSize: veryCompact ? 11 : 12,
+                  fontWeight: _selectedGroup == item.$1
                       ? FontWeight.w700
                       : FontWeight.w500,
                 ),
@@ -2367,51 +2659,49 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
           )
           .toList(),
     );
+  }
 
-    final compactTabWrap = Center(
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: tabs
-            .map(
-              (item) => Tooltip(
-                message: item.$2,
-                child: ChoiceChip(
-                  label: Icon(
-                    compactTabIcons[item.$1] ?? Icons.radio_button_checked,
-                    size: 18,
-                    color: item.$1 == _engineerTab
-                        ? Colors.white
-                        : const Color(0xFF334155),
-                  ),
-                  selected: item.$1 == _engineerTab,
-                  onSelected: (_) => _onEngineerTabChanged(item.$1),
-                  selectedColor: const Color(0xFF0F766E),
-                  backgroundColor: Colors.white,
-                  side: BorderSide(
-                    color: item.$1 == _engineerTab
-                        ? const Color(0xFF0F766E)
-                        : const Color(0xFFCBD5E1),
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: const VisualDensity(
-                    horizontal: -2,
-                    vertical: -2,
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                ),
-              ),
-            )
-            .toList(),
-      ),
-    );
+  IconData _poolIconForValue(String value) {
+    switch (value) {
+      case 'public_pool':
+        return Icons.move_to_inbox_outlined;
+      case 'my_wos':
+        return Icons.assignment_ind_outlined;
+      case 'others_wos':
+        return Icons.people_alt_outlined;
+      case 'picked_wos':
+        return Icons.work_outline;
+      default:
+        return Icons.radio_button_checked;
+    }
+  }
 
+  IconData _groupIconForValue(String value) {
+    switch (value) {
+      case 'picked':
+        return Icons.pan_tool_alt_outlined;
+      case 'scheduled':
+        return Icons.event_note_outlined;
+      case 'working':
+        return Icons.build_circle_outlined;
+      case 'need_sign':
+        return Icons.draw_outlined;
+      case 'need_approve':
+        return Icons.fact_check_outlined;
+      case 'need_send_email':
+        return Icons.outgoing_mail;
+      case 'ended':
+        return Icons.task_alt_outlined;
+      case 'all':
+        return Icons.apps_outlined;
+      case 'cancelled':
+        return Icons.cancel_outlined;
+      default:
+        return Icons.label_outline;
+    }
+  }
+
+  Widget _buildFilterPanel({required bool useCompactLayout}) {
     final plannedDateButton = OutlinedButton.icon(
       onPressed: _pickPlannedDate,
       icon: const Icon(Icons.event_outlined, size: 18),
@@ -2429,145 +2719,273 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
             child: const Text('Clear date'),
           );
 
-    final toggleDetailButton = SizedBox(
-      height: 40,
-      child: TextButton.icon(
-        onPressed: _toggleDetailedSearch,
-        style: TextButton.styleFrom(
-          visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        icon: Icon(
-          _showDetailedSearch
-              ? Icons.keyboard_arrow_up
-              : Icons.keyboard_arrow_down,
-          size: 18,
-        ),
-        label: Text(
-          _showDetailedSearch ? 'hide' : 'more search options',
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
-
-    final toggleEngineerButton = Align(
-      alignment: Alignment.center,
-      child: TextButton.icon(
-        onPressed: _toggleCompactEngineerFilters,
-        style: TextButton.styleFrom(
-          visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        icon: Icon(
-          _showCompactEngineerFilters
-              ? Icons.keyboard_arrow_up
-              : Icons.keyboard_arrow_down,
-          size: 18,
-        ),
-        label: Text(
-          _showCompactEngineerFilters ? 'hide' : 'search',
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
-
-    final mainContent = useCompactLayout
-        ? Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Text(
-                  currentCompactTabLabel,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF475569),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 6),
-              compactTabWrap,
-              const SizedBox(height: 6),
-              if (!_showCompactEngineerFilters) toggleEngineerButton,
-              if (_showCompactEngineerFilters) ...[
-                const SizedBox(height: 8),
-                _buildInstitutionAutocomplete(double.infinity),
-                if (showStatusFilter) ...[
-                  const SizedBox(height: 12),
-                  _buildStatusField(double.infinity),
-                ],
-                if (showEngineerDropdown) ...[
-                  const SizedBox(height: 12),
-                  _buildEngineerDropdown(double.infinity, enabled: true),
-                  const SizedBox(height: 4),
-                  _buildIncludeInactiveEngineersCheckbox(),
-                ],
-                if (showPlannedDate) ...[
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [plannedDateButton, plannedDateClear],
-                  ),
-                ],
-                // if (_showCompactEngineerFilters) toggleEngineerButton,
-              ],
-            ],
-          )
-        : Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            crossAxisAlignment: WrapCrossAlignment.start,
-
-            children: [
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: tabToggle,
-              ),
-              _buildInstitutionAutocomplete(240),
-              if (showStatusFilter) _buildStatusField(240),
-              if (showEngineerDropdown)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildEngineerDropdown(240, enabled: true),
-                    SizedBox(
-                      width: 220,
-                      child: _buildIncludeInactiveEngineersCheckbox(),
-                    ),
-                  ],
-                ),
-              if (showPlannedDate) plannedDateButton,
-              if (showPlannedDate && _plannedDateFilter != null)
-                plannedDateClear,
-              if (!_showDetailedSearch) ...[toggleDetailButton],
-            ],
-          );
-
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        mainContent,
-        const SizedBox(height: 4),
-        // _buildDetailedSearchToggle(),
-        if (!useCompactLayout && _showDetailedSearch ||
-            useCompactLayout && _showCompactEngineerFilters) ...[
-          const SizedBox(height: 8),
-          _buildDetailedSearchContent(useCompactLayout),
-          if (useCompactLayout && _showCompactEngineerFilters)
-            toggleEngineerButton,
+        if (!useCompactLayout) ...[
+          Text(
+            _selectionSummary,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF475569),
+            ),
+          ),
+          const SizedBox(height: 10),
+          _buildPoolSelector(useCompactLayout: useCompactLayout),
+          if (_groupOptions.isNotEmpty) ...[const SizedBox(height: 8)],
         ],
+        if (!useCompactLayout && _groupOptions.isNotEmpty) ...[
+          _buildGroupSelector(),
+        ],
+        const SizedBox(height: 16),
+        _buildInstitutionAutocomplete(double.infinity),
+        if (_showStatusFilter) ...[
+          const SizedBox(height: 12),
+          _buildStatusField(double.infinity),
+        ],
+        if (_showEngineerFilter) ...[
+          const SizedBox(height: 12),
+          _buildEngineerDropdown(double.infinity, enabled: true),
+          const SizedBox(height: 4),
+          _buildIncludeInactiveEngineersCheckbox(),
+        ],
+        if (_showPlannedDate) ...[
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [plannedDateButton, plannedDateClear],
+          ),
+        ],
+        const SizedBox(height: 8),
+        _buildDetailedSearchContent(useCompactLayout),
       ],
     );
 
-    return _buildQuickFilterContainer(
-      title: 'Engineer filters',
-      child: content,
+    return _buildQuickFilterContainer(title: 'Filters', child: content);
+  }
+
+  Widget _buildWorkOrderListContent({
+    required bool shouldUseCardView,
+    required bool hasManagerRole,
+    required bool hasAdminRole,
+    required bool hasEngineerRole,
+    required double bottomContentPadding,
+  }) {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_items.isEmpty) {
+      return const Center(child: Text('No work orders found.'));
+    }
+
+    if (shouldUseCardView) {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          int columns = 1;
+          if (width >= 1800) {
+            columns = 5;
+          } else if (width >= 1500) {
+            columns = 4;
+          } else if (width >= 1100) {
+            columns = 3;
+          } else if (width >= 700) {
+            columns = 2;
+          }
+
+          const spacing = 8.0;
+          final rows = <List<WorkOrder>>[];
+          for (var i = 0; i < _items.length; i += columns) {
+            final end = (i + columns < _items.length)
+                ? i + columns
+                : _items.length;
+            rows.add(_items.sublist(i, end));
+          }
+
+          return SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, bottomContentPadding),
+            child: Column(
+              children: rows
+                  .map(
+                    (rowItems) => Padding(
+                      padding: const EdgeInsets.only(bottom: spacing),
+                      child: IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (var index = 0; index < columns; index++) ...[
+                              if (index > 0) const SizedBox(width: spacing),
+                              Expanded(
+                                child: index < rowItems.length
+                                    ? _buildRow(
+                                        context,
+                                        rowItems[index],
+                                        hasManagerRole:
+                                            hasManagerRole || hasAdminRole,
+                                        hasEngineerRole: hasEngineerRole,
+                                      )
+                                    : const SizedBox.shrink(),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+          );
+        },
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tableWidth = constraints.maxWidth * 0.95;
+        final sidePadding = (constraints.maxWidth - tableWidth) / 2;
+
+        final safeActionsWidth = 60.0;
+
+        final woWidthWeight = 0.10;
+        final createdWidthWeight = 0.12;
+        final locationWidthWeight = 0.12;
+        final deviceWidthWeight = 0.10;
+        final issueWidthWeight = 0.20;
+        final ownerWidthWeight = 0.09;
+        final statusWidthWeight = 0.10;
+
+        final sumWeight =
+            woWidthWeight +
+            createdWidthWeight +
+            locationWidthWeight +
+            deviceWidthWeight +
+            issueWidthWeight +
+            ownerWidthWeight +
+            statusWidthWeight;
+
+        final woWidth =
+            ((tableWidth - safeActionsWidth) * (woWidthWeight / sumWeight))
+                .toInt();
+        final createdWidth =
+            ((tableWidth - safeActionsWidth) * (createdWidthWeight / sumWeight))
+                .toInt();
+        final locationWidth =
+            ((tableWidth - safeActionsWidth) *
+                    (locationWidthWeight / sumWeight))
+                .toInt();
+        final deviceWidth =
+            ((tableWidth - safeActionsWidth) * (deviceWidthWeight / sumWeight))
+                .toInt();
+        final issueWidth =
+            ((tableWidth - safeActionsWidth) * (issueWidthWeight / sumWeight))
+                .toInt();
+        final ownerWidth =
+            ((tableWidth - safeActionsWidth) * (ownerWidthWeight / sumWeight))
+                .toInt();
+        final statusWidth =
+            ((tableWidth - safeActionsWidth) * (statusWidthWeight / sumWeight))
+                .toInt();
+
+        final realActionsWidth =
+            tableWidth -
+            (woWidth +
+                createdWidth +
+                locationWidth +
+                deviceWidth +
+                issueWidth +
+                ownerWidth +
+                statusWidth);
+
+        final headerRow = Row(
+          children: [
+            _buildTableHeaderCell('WO Number', woWidth.toDouble()),
+            _buildTableHeaderCell('HA Created At', createdWidth.toDouble()),
+            _buildTableHeaderCell('Location', locationWidth.toDouble()),
+            _buildTableHeaderCell('Device', deviceWidth.toDouble()),
+            _buildTableHeaderCell('Issue', issueWidth.toDouble()),
+            _buildTableHeaderCell('Taken By', ownerWidth.toDouble()),
+            _buildTableHeaderCell('Status', statusWidth.toDouble()),
+            _buildTableHeaderCell('', realActionsWidth.toDouble()),
+          ],
+        );
+
+        final listRows = _items
+            .map(
+              (item) => _buildTraditionalRow(
+                context,
+                item,
+                hasManagerRole: hasManagerRole || hasAdminRole,
+                hasEngineerRole: hasEngineerRole,
+                woWidth: woWidth.toDouble(),
+                createdWidth: createdWidth.toDouble(),
+                locationWidth: locationWidth.toDouble(),
+                deviceWidth: deviceWidth.toDouble(),
+                issueWidth: issueWidth.toDouble(),
+                ownerWidth: ownerWidth.toDouble(),
+                statusWidth: statusWidth.toDouble(),
+                actionsWidth: realActionsWidth - 2,
+              ),
+            )
+            .toList();
+
+        return Column(
+          children: [
+            NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (!_syncingHorizontalTableScroll) {
+                  _syncHorizontalTableScroll(
+                    sourceController: _listHeaderScrollController,
+                    targetController: _listBodyScrollController,
+                    offset: notification.metrics.pixels,
+                  );
+                }
+                return false;
+              },
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: sidePadding),
+                child: SingleChildScrollView(
+                  controller: _listHeaderScrollController,
+                  scrollDirection: Axis.horizontal,
+                  physics: const ClampingScrollPhysics(),
+                  child: SizedBox(width: tableWidth, child: headerRow),
+                ),
+              ),
+            ),
+            Expanded(
+              child: NotificationListener<ScrollNotification>(
+                onNotification: (notification) {
+                  if (!_syncingHorizontalTableScroll) {
+                    _syncHorizontalTableScroll(
+                      sourceController: _listBodyScrollController,
+                      targetController: _listHeaderScrollController,
+                      offset: notification.metrics.pixels,
+                    );
+                  }
+                  return false;
+                },
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.vertical,
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.symmetric(horizontal: sidePadding),
+                    controller: _listBodyScrollController,
+                    scrollDirection: Axis.horizontal,
+                    physics: const ClampingScrollPhysics(),
+                    child: SizedBox(
+                      width: tableWidth,
+                      child: Column(
+                        children: [...listRows, const SizedBox(height: 8)],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -2596,7 +3014,8 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     final screenWidth = MediaQuery.of(context).size.width;
     final shouldUseCardLayoutByWidth = screenWidth < _cardModeWidthBreakpoint;
     final shouldUseCardView = shouldUseCardLayoutByWidth || _useCardView;
-    final useCompactFilters = screenWidth < 980;
+    // final useCompactFilters = screenWidth < 980;
+    final useDesktopSidebar = screenWidth >= 1200;
     final bottomContentPadding = 20.0;
 
     return Scaffold(
@@ -2725,278 +3144,122 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       floatingActionButtonLocation: hasManagerRole
           ? FloatingActionButtonLocation.endFloat
           : null,
-      body: Column(
-        children: [
-          if (hasEngineerRole) _buildEngineerFilters(useCompactFilters),
-          if (hasManagerRole && !hasEngineerRole)
-            _buildManagerFilters(useCompactFilters),
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _items.isEmpty
-                ? const Center(child: Text('No work orders found.'))
-                : shouldUseCardView
-                ? LayoutBuilder(
-                    builder: (context, constraints) {
-                      final width = constraints.maxWidth;
-                      int columns = 1;
-                      if (width >= 1800) {
-                        columns = 5;
-                      } else if (width >= 1500) {
-                        columns = 4;
-                      } else if (width >= 1100) {
-                        columns = 3;
-                      } else if (width >= 700) {
-                        columns = 2;
-                      }
-
-                      const spacing = 8.0;
-                      final rows = <List<WorkOrder>>[];
-                      for (var i = 0; i < _items.length; i += columns) {
-                        final end = (i + columns < _items.length)
-                            ? i + columns
-                            : _items.length;
-                        rows.add(_items.sublist(i, end));
-                      }
-
-                      return SingleChildScrollView(
-                        padding: EdgeInsets.fromLTRB(
-                          16,
-                          0,
-                          16,
-                          bottomContentPadding,
+      body: useDesktopSidebar
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: _buildWorkOrderListContent(
+                          shouldUseCardView: shouldUseCardView,
+                          hasManagerRole: hasManagerRole,
+                          hasAdminRole: hasAdminRole,
+                          hasEngineerRole: hasEngineerRole,
+                          bottomContentPadding: bottomContentPadding,
                         ),
-                        child: Column(
-                          children: rows
-                              .map(
-                                (rowItems) => Padding(
-                                  padding: const EdgeInsets.only(
-                                    bottom: spacing,
-                                  ),
-                                  child: IntrinsicHeight(
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        for (
-                                          var index = 0;
-                                          index < columns;
-                                          index++
-                                        ) ...[
-                                          if (index > 0)
-                                            const SizedBox(width: spacing),
-                                          Expanded(
-                                            child: index < rowItems.length
-                                                ? _buildRow(
-                                                    context,
-                                                    rowItems[index],
-                                                    hasManagerRole:
-                                                        hasManagerRole ||
-                                                        hasAdminRole,
-                                                    hasEngineerRole:
-                                                        hasEngineerRole,
-                                                  )
-                                                : const SizedBox.shrink(),
-                                          ),
-                                        ],
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              )
-                              .toList(),
-                        ),
-                      );
-                    },
-                  )
-                : LayoutBuilder(
-                    builder: (context, constraints) {
-                      final tableWidth = constraints.maxWidth * 0.95;
-                      final sidePadding =
-                          (constraints.maxWidth - tableWidth) / 2;
-
-                      final safeActionsWidth = 60.0;
-
-                      final woWidthWeight = 0.10;
-                      final createdWidthWeight = 0.12;
-                      final locationWidthWeight = 0.12;
-                      final deviceWidthWeight = 0.10;
-                      final issueWidthWeight = 0.20;
-                      final ownerWidthWeight = 0.09;
-                      final statusWidthWeight = 0.10;
-
-                      final sumWeight =
-                          woWidthWeight +
-                          createdWidthWeight +
-                          locationWidthWeight +
-                          deviceWidthWeight +
-                          issueWidthWeight +
-                          ownerWidthWeight +
-                          statusWidthWeight;
-
-                      final woWidth =
-                          ((tableWidth - safeActionsWidth) *
-                                  (woWidthWeight / sumWeight))
-                              .toInt();
-                      final createdWidth =
-                          ((tableWidth - safeActionsWidth) *
-                                  (createdWidthWeight / sumWeight))
-                              .toInt();
-                      final locationWidth =
-                          ((tableWidth - safeActionsWidth) *
-                                  (locationWidthWeight / sumWeight))
-                              .toInt();
-                      final deviceWidth =
-                          ((tableWidth - safeActionsWidth) *
-                                  (deviceWidthWeight / sumWeight))
-                              .toInt();
-                      final issueWidth =
-                          ((tableWidth - safeActionsWidth) *
-                                  (issueWidthWeight / sumWeight))
-                              .toInt();
-                      final ownerWidth =
-                          ((tableWidth - safeActionsWidth) *
-                                  (ownerWidthWeight / sumWeight))
-                              .toInt();
-                      final statusWidth =
-                          ((tableWidth - safeActionsWidth) *
-                                  (statusWidthWeight / sumWeight))
-                              .toInt();
-
-                      final realActionsWidth =
-                          tableWidth -
-                          (woWidth +
-                              createdWidth +
-                              locationWidth +
-                              deviceWidth +
-                              issueWidth +
-                              ownerWidth +
-                              statusWidth);
-
-                      final headerRow = Row(
-                        children: [
-                          _buildTableHeaderCell(
-                            'WO Number',
-                            woWidth.toDouble(),
-                          ),
-                          _buildTableHeaderCell(
-                            'HA Created At',
-                            createdWidth.toDouble(),
-                          ),
-                          _buildTableHeaderCell(
-                            'Location',
-                            locationWidth.toDouble(),
-                          ),
-                          _buildTableHeaderCell(
-                            'Device',
-                            deviceWidth.toDouble(),
-                          ),
-                          _buildTableHeaderCell('Issue', issueWidth.toDouble()),
-                          _buildTableHeaderCell(
-                            'Taken By',
-                            ownerWidth.toDouble(),
-                          ),
-                          _buildTableHeaderCell(
-                            'Status',
-                            statusWidth.toDouble(),
-                          ),
-                          _buildTableHeaderCell(
-                            '',
-                            realActionsWidth.toDouble(),
-                          ),
-                        ],
-                      );
-
-                      final listRows = _items
-                          .map(
-                            (item) => _buildTraditionalRow(
-                              context,
-                              item,
-                              hasManagerRole: hasManagerRole || hasAdminRole,
-                              hasEngineerRole: hasEngineerRole,
-                              woWidth: woWidth.toDouble(),
-                              createdWidth: createdWidth.toDouble(),
-                              locationWidth: locationWidth.toDouble(),
-                              deviceWidth: deviceWidth.toDouble(),
-                              issueWidth: issueWidth.toDouble(),
-                              ownerWidth: ownerWidth.toDouble(),
-                              statusWidth: statusWidth.toDouble(),
-                              actionsWidth: realActionsWidth - 2,
-                            ),
-                          )
-                          .toList();
-
-                      return Column(
-                        children: [
-                          NotificationListener<ScrollNotification>(
-                            onNotification: (notification) {
-                              if (!_syncingHorizontalTableScroll) {
-                                _syncHorizontalTableScroll(
-                                  sourceController: _listHeaderScrollController,
-                                  targetController: _listBodyScrollController,
-                                  offset: notification.metrics.pixels,
-                                );
-                              }
-                              return false;
-                            },
-                            child: Padding(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: sidePadding,
-                              ),
-                              child: SingleChildScrollView(
-                                controller: _listHeaderScrollController,
-                                scrollDirection: Axis.horizontal,
-                                physics: const ClampingScrollPhysics(),
-                                child: SizedBox(
-                                  width: tableWidth,
-                                  child: headerRow,
-                                ),
-                              ),
-                            ),
-                          ),
-                          Expanded(
-                            child: NotificationListener<ScrollNotification>(
-                              onNotification: (notification) {
-                                if (!_syncingHorizontalTableScroll) {
-                                  _syncHorizontalTableScroll(
-                                    sourceController: _listBodyScrollController,
-                                    targetController:
-                                        _listHeaderScrollController,
-                                    offset: notification.metrics.pixels,
-                                  );
-                                }
-                                return false;
-                              },
-                              child: SingleChildScrollView(
-                                scrollDirection: Axis.vertical,
-                                child: SingleChildScrollView(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: sidePadding,
-                                  ),
-                                  controller: _listBodyScrollController,
-                                  scrollDirection: Axis.horizontal,
-                                  physics: const ClampingScrollPhysics(),
-                                  child: SizedBox(
-                                    width: tableWidth,
-                                    child: Column(
-                                      children: [
-                                        ...listRows,
-                                        const SizedBox(height: 8),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
+                      ),
+                      _buildPaginationBar(hasFloatingButton: hasManagerRole),
+                    ],
                   ),
-          ),
-          _buildPaginationBar(hasFloatingButton: hasManagerRole),
-        ],
-      ),
+                ),
+                SizedBox(
+                  width: 375,
+                  child: SafeArea(
+                    top: false,
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.only(top: 12, right: 12),
+                      child: _buildFilterPanel(useCompactLayout: false),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          : Column(
+              children: [
+                _buildQuickFilterContainer(
+                  title: 'Pool',
+                  child: Stack(
+                    alignment: Alignment.topRight,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 36),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (screenWidth < 430) ...[
+                              Text(
+                                _mobileSelectionSummary,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF475569),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                            _buildPoolSelector(useCompactLayout: true),
+                            if (_groupOptions.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              _buildGroupSelector(),
+                            ],
+                            if (!_showMobileFilters &&
+                                _mobileFilterSummary.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                _mobileFilterSummary,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Color(0xFF64748B),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      SizedBox(
+                        width: 30,
+                        height: 30,
+                        child: IconButton(
+                          onPressed: _toggleMobileFilters,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 30,
+                            minHeight: 30,
+                          ),
+                          visualDensity: const VisualDensity(
+                            horizontal: -4,
+                            vertical: -4,
+                          ),
+                          tooltip: _showMobileFilters
+                              ? 'Hide filters'
+                              : 'Show filters',
+                          icon: Icon(
+                            _showMobileFilters ? Icons.tune : Icons.tune,
+                            size: 18,
+                            color: const Color(0xFF334155),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (_showMobileFilters)
+                  _buildFilterPanel(useCompactLayout: true),
+                Expanded(
+                  child: _buildWorkOrderListContent(
+                    shouldUseCardView: shouldUseCardView,
+                    hasManagerRole: hasManagerRole,
+                    hasAdminRole: hasAdminRole,
+                    hasEngineerRole: hasEngineerRole,
+                    bottomContentPadding: bottomContentPadding,
+                  ),
+                ),
+                _buildPaginationBar(hasFloatingButton: hasManagerRole),
+              ],
+            ),
     );
   }
 }

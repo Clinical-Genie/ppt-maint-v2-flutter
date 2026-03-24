@@ -3,6 +3,7 @@ import 'package:maintapp/api/api_controller.dart';
 import 'package:maintapp/common/platform_helper.dart';
 import 'package:maintapp/pages/dashboard_page.dart';
 import 'package:maintapp/pages/email_batch_list_page.dart';
+import 'package:maintapp/pages/form_template_choice_group_list_page.dart';
 import 'package:maintapp/pages/login_page.dart';
 import 'package:maintapp/pages/login_sessions_page.dart';
 import 'package:maintapp/pages/profile_page.dart';
@@ -29,36 +30,38 @@ class MyApp extends StatelessWidget {
     return _AppLifecycleGuard(
       child: MaterialApp(
         navigatorKey: navigatorKey,
-      title: 'PPT Maintenance System',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        // colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueGrey),
-        colorScheme: const ColorScheme(
-          brightness: Brightness.light,
-          primary: Color(0xFF212121),
-          onPrimary: Colors.white,
-          secondary: Color(0xFF757575),
-          onSecondary: Colors.white,
-          error: Color(0xFFB00020),
-          onError: Colors.white,
-          surface: Color(0xFFF5F5F5),
-          onSurface: Color(0xFF111111),
-        ),
+        title: 'PPT Maintenance System',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          // colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueGrey),
+          colorScheme: const ColorScheme(
+            brightness: Brightness.light,
+            primary: Color(0xFF212121),
+            onPrimary: Colors.white,
+            secondary: Color(0xFF757575),
+            onSecondary: Colors.white,
+            error: Color(0xFFB00020),
+            onError: Colors.white,
+            surface: Color(0xFFF5F5F5),
+            onSurface: Color(0xFF111111),
+          ),
 
-        useMaterial3: true,
-      ),
-      home: const LoginPage(),
-      routes: {
-        '/home': (context) => const DashboardPage(),
-        '/login': (context) => const LoginPage(),
-        '/profile': (context) => const ProfilePage(),
-        '/login-sessions': (context) => const LoginSessionsPage(),
-        '/create-work-order': (context) => const CreateWorkOrderPage(),
-        '/work-orders': (context) => const WorkOrderListPage(),
-        '/email-batches': (context) => const EmailBatchListPage(),
-        '/transfer-requests': (context) => const TransferRequestListPage(),
-        '/user-management': (context) => const UserManagementPage(),
-      },
+          useMaterial3: true,
+        ),
+        home: const LoginPage(),
+        routes: {
+          '/home': (context) => const DashboardPage(),
+          '/login': (context) => const LoginPage(),
+          '/profile': (context) => const ProfilePage(),
+          '/login-sessions': (context) => const LoginSessionsPage(),
+          '/create-work-order': (context) => const CreateWorkOrderPage(),
+          '/work-orders': (context) => const WorkOrderListPage(),
+          '/email-batches': (context) => const EmailBatchListPage(),
+          '/template-choice-groups': (context) =>
+              const FormTemplateChoiceGroupListPage(),
+          '/transfer-requests': (context) => const TransferRequestListPage(),
+          '/user-management': (context) => const UserManagementPage(),
+        },
       ),
     );
   }
@@ -104,7 +107,10 @@ class _AppLifecycleGuardState extends State<_AppLifecycleGuard>
     try {
       final session = LoginSessionController.instance;
       if (!session.isLoggedIn()) {
-        return;
+        await session.loadSessionFromStorage(fetchUserInfo: true);
+        if (!session.isLoggedIn()) {
+          return;
+        }
       }
 
       await session.refreshTokenIfNeeded();
@@ -113,7 +119,6 @@ class _AppLifecycleGuardState extends State<_AppLifecycleGuard>
         ApiAction.callAPIFail(
           'appLifecycleResume',
           'Session expired',
-          'Refresh token failed when app resumed from background.',
           'Please sign in again.',
           false,
         );

@@ -598,7 +598,9 @@ class _CreateWorkOrderPageState extends State<CreateWorkOrderPage> {
       final created = await ApiController.createWorkOrder(_buildPayload());
       if (!mounted) return;
       try {
-        AppState.instance.setInstitutions(await ApiController.listInstitutions());
+        AppState.instance.setInstitutions(
+          await ApiController.listInstitutions(),
+        );
       } catch (_) {}
 
       if (created.id.isEmpty && created.woNo.isEmpty) {

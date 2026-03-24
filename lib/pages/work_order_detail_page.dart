@@ -9,6 +9,7 @@ import 'package:maintapp/model/work_order.dart';
 import 'package:maintapp/model/work_order_history.dart';
 import 'package:maintapp/pages/edit_work_order_page.dart';
 import 'package:maintapp/pages/transfer_request_list_page.dart';
+import 'package:maintapp/pages/work_order_report_pages.dart';
 import 'package:maintapp/state/app_state.dart';
 import 'package:maintapp/state/login_session_controller.dart';
 import 'package:maintapp/widgets/pdf_embed_view.dart';
@@ -90,6 +91,27 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
   }
 
   bool get _hasManagerActions => _hasRole('MANAGER') || _hasRole('ADMIN');
+
+  bool get _hasEngineerRole => _hasRole('ENGINEER');
+
+  bool _isMine(WorkOrder order) {
+    final currentUserId = LoginSessionController.instance.userInfo.id.trim();
+    return currentUserId.isNotEmpty &&
+        order.ownerUserId.trim() == currentUserId;
+  }
+
+  bool _isUnassigned(WorkOrder order) {
+    final status = order.status.trim().toLowerCase();
+    return order.ownerUserId.trim().isEmpty || status == 'unassigned';
+  }
+
+  bool _isAssignedToOthers(WorkOrder order) {
+    final ownerUserId = order.ownerUserId.trim();
+    final currentUserId = LoginSessionController.instance.userInfo.id.trim();
+    return ownerUserId.isNotEmpty &&
+        currentUserId.isNotEmpty &&
+        ownerUserId != currentUserId;
+  }
 
   bool get _canCreateTransferRequest {
     const allowedStatuses = {
@@ -321,6 +343,149 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
     );
   }
 
+  Future<String?> _promptEngineerId({
+    required String title,
+    String? excludeUserId,
+  }) async {
+    final allEngineers =
+        AppState.instance.allUsers
+            .where(
+              (user) =>
+                  user.roles.any((role) => role.toUpperCase() == 'ENGINEER') &&
+                  (excludeUserId == null || user.id != excludeUserId),
+            )
+            .toList()
+          ..sort(
+            (a, b) =>
+                a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()),
+          );
+    if (allEngineers.isEmpty) {
+      return null;
+    }
+
+    String selectedUserId = allEngineers.first.id;
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(title),
+              content: DropdownButtonFormField<String>(
+                initialValue: selectedUserId,
+                items: allEngineers
+                    .map(
+                      (user) => DropdownMenuItem<String>(
+                        value: user.id,
+                        child: Text(user.fullName),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value == null || value.isEmpty) return;
+                  setDialogState(() => selectedUserId = value);
+                },
+                decoration: const InputDecoration(
+                  labelText: 'Engineer',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () =>
+                      Navigator.of(dialogContext).pop(selectedUserId),
+                  child: const Text('Confirm'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<({DateTime plannedDate, String plannedHalfDay})?> _promptSchedule(
+    String title,
+  ) async {
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(const Duration(days: 3650)),
+    );
+    if (pickedDate == null || !mounted) {
+      return null;
+    }
+
+    String selectedHalfDay = 'am';
+    if (!mounted) return null;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Schedule session'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('AM'),
+                        selected: selectedHalfDay == 'am',
+                        onSelected: (_) => setDialogState(() {
+                          selectedHalfDay = 'am';
+                        }),
+                      ),
+                      ChoiceChip(
+                        label: const Text('PM'),
+                        selected: selectedHalfDay == 'pm',
+                        onSelected: (_) => setDialogState(() {
+                          selectedHalfDay = 'pm';
+                        }),
+                      ),
+                      ChoiceChip(
+                        label: const Text('Full day'),
+                        selected: selectedHalfDay == 'full_day',
+                        onSelected: (_) => setDialogState(() {
+                          selectedHalfDay = 'full_day';
+                        }),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () =>
+                      Navigator.of(dialogContext).pop(selectedHalfDay),
+                  child: const Text('Confirm'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result == null || result.isEmpty) return null;
+    return (plannedDate: pickedDate, plannedHalfDay: result);
+  }
+
   Future<void> _editWorkOrder() async {
     final updated = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
@@ -348,6 +513,209 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  Future<void> _performWorkOrderAction(String action) async {
+    try {
+      String feedback = '';
+      if (action == 'open_incoming_transfers') {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => const TransferRequestListPage(
+              initialMode: TransferRequestPageMode.outgoing,
+            ),
+          ),
+        );
+        if (!mounted) return;
+        await _load();
+        return;
+      } else if (action == 'assign_to_engineer') {
+        final engineerId = await _promptEngineerId(title: 'Assign to engineer');
+        if (engineerId == null || engineerId.isEmpty) return;
+        final result = await ApiController.assignWorkOrder(
+          _workOrder.id,
+          targetUserId: engineerId,
+          reason: 'Assign on demand.',
+        );
+        feedback = result.message.isNotEmpty ? result.message : 'Assigned.';
+      } else if (action == 'revoke_to_unassigned') {
+        final reason = await _promptReason('Return to public pool');
+        if (reason == null || reason.isEmpty) return;
+        feedback = await ApiController.releaseWorkOrder(_workOrder.id, reason);
+      } else if (action == 'take') {
+        feedback = await ApiController.pickWorkOrder(_workOrder.id);
+      } else if (action == 'transfer_away' || action == 'transfer_to_me') {
+        await _openTransferRequestDialog();
+        return;
+      } else if (action == 'release_to_unassigned') {
+        final reason = await _promptReason('Return to public pool');
+        if (reason == null || reason.isEmpty) return;
+        feedback = await ApiController.releaseWorkOrder(_workOrder.id, reason);
+      } else if (action == 'plan') {
+        final picked = await _promptSchedule('Schedule work order');
+        if (picked == null) return;
+        feedback = await ApiController.planWorkOrder(
+          _workOrder.id,
+          plannedDate:
+              '${picked.plannedDate.year}-${picked.plannedDate.month.toString().padLeft(2, '0')}-${picked.plannedDate.day.toString().padLeft(2, '0')}',
+          plannedHalfDay: picked.plannedHalfDay == 'full_day'
+              ? null
+              : picked.plannedHalfDay,
+        );
+      } else if (action == 'cannot_complete') {
+        final reason = await _promptReason('Cannot complete reason');
+        if (reason == null || reason.isEmpty) return;
+        feedback = await ApiController.markWorkOrderCannotCompleted(
+          _workOrder.id,
+          reason,
+        );
+      } else if (action == 'fill_report') {
+        if (_workOrder.woType.trim().toUpperCase() != 'CM') {
+          feedback = 'Only CM report is wired now.';
+        } else {
+          final updated = await Navigator.of(context).push<bool>(
+            MaterialPageRoute(
+              builder: (_) => WorkOrderReportFormPage(workOrder: _workOrder),
+            ),
+          );
+          if (updated == true) {
+            await _load();
+          }
+          return;
+        }
+      } else if (action == 'sign') {
+        final updated = await Navigator.of(context).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => WorkOrderSignPage(workOrder: _workOrder),
+          ),
+        );
+        if (updated == true) {
+          await _load();
+        }
+        return;
+      } else if (action == 'view_report') {
+        feedback = 'View Report page is not wired yet.';
+      } else if (action == 'send_email') {
+        feedback = 'Multiple-select send email is not wired yet.';
+      } else if (action == 'start') {
+        feedback = await ApiController.startWorkOrder(_workOrder.id);
+      } else {
+        return;
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(feedback)));
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Action failed: $e')));
+    }
+  }
+
+  List<MapEntry<String, String>> _buildDetailActions() {
+    if (_workOrder.isTransferring) {
+      if (_isCurrentEngineerOwner) {
+        return const [MapEntry('open_incoming_transfers', 'Manage transfer')];
+      }
+      return const [];
+    }
+
+    final items = <MapEntry<String, String>>[];
+    final normalizedStatus = _workOrder.status.trim().toLowerCase();
+
+    if (_hasManagerActions) {
+      if (_isUnassigned(_workOrder) || normalizedStatus == 'unassigned') {
+        items.add(const MapEntry('assign_to_engineer', 'Assign to engineer'));
+      } else if (normalizedStatus == 'assigned' ||
+          normalizedStatus == 'planned' ||
+          normalizedStatus == 'cannot_completed') {
+        items.add(const MapEntry('assign_to_engineer', 'Assign to engineer'));
+        items.add(
+          const MapEntry('revoke_to_unassigned', 'Return to public pool'),
+        );
+      } else if (normalizedStatus == 'signed' ||
+          normalizedStatus == 'signed_edited') {
+        items.add(const MapEntry('view_report', 'View Report'));
+      } else if (normalizedStatus == 'approved') {
+        items.add(const MapEntry('send_email', 'Send email'));
+      }
+    }
+
+    if (_hasEngineerRole) {
+      if (_isUnassigned(_workOrder)) {
+        items.add(const MapEntry('take', 'Take it'));
+      } else if (_isMine(_workOrder)) {
+        if (normalizedStatus == 'assigned' ||
+            normalizedStatus == 'cannot_completed') {
+          items.add(const MapEntry('plan', 'Schedule'));
+          items.add(const MapEntry('start', 'Start work'));
+          items.add(const MapEntry('transfer_away', 'Hand off'));
+          if (!_hasManagerActions) {
+            items.add(
+              const MapEntry('release_to_unassigned', 'Return to public pool'),
+            );
+          }
+        } else if (normalizedStatus == 'planned') {
+          items.add(const MapEntry('plan', 'Re-schedule'));
+          items.add(const MapEntry('start', 'Start work'));
+          items.add(const MapEntry('transfer_away', 'Hand off'));
+          if (!_hasManagerActions) {
+            items.add(
+              const MapEntry('release_to_unassigned', 'Return to public pool'),
+            );
+          }
+        } else if (normalizedStatus == 'working') {
+          items.add(const MapEntry('fill_report', 'Fill report'));
+          items.add(const MapEntry('cannot_complete', 'Cannot complete'));
+        } else if (normalizedStatus == 'completed') {
+          items.add(const MapEntry('sign', 'Sign'));
+        }
+      } else if (_isAssignedToOthers(_workOrder)) {
+        if (normalizedStatus == 'assigned' || normalizedStatus == 'planned') {
+          items.add(const MapEntry('transfer_to_me', 'Take over'));
+        }
+      }
+    }
+
+    return items;
+  }
+
+  IconData _iconForActionButton(String action) {
+    switch (action) {
+      case 'assign_to_engineer':
+        return Icons.person_add_alt_1_outlined;
+      case 'revoke_to_unassigned':
+      case 'release_to_unassigned':
+        return Icons.undo_outlined;
+      case 'take':
+        return Icons.pan_tool_alt_outlined;
+      case 'plan':
+        return Icons.event_outlined;
+      case 'start':
+        return Icons.play_arrow_outlined;
+      case 'transfer_away':
+        return Icons.forward_to_inbox_outlined;
+      case 'transfer_to_me':
+        return Icons.move_down_outlined;
+      case 'cannot_complete':
+        return Icons.report_problem_outlined;
+      case 'fill_report':
+        return Icons.description_outlined;
+      case 'sign':
+        return Icons.draw_outlined;
+      case 'view_report':
+        return Icons.visibility_outlined;
+      case 'send_email':
+        return Icons.send_outlined;
+      case 'open_incoming_transfers':
+        return Icons.open_in_new;
+      default:
+        return Icons.playlist_add_check_circle_outlined;
     }
   }
 
@@ -564,17 +932,18 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
       return status.isEmpty ? '-' : status;
     }
 
-    final parts = <String>[];
-    if (_workOrder.plannedDate.trim().isNotEmpty) {
-      parts.add(_workOrder.plannedDate.trim());
-    }
-    if (_workOrder.plannedHalfDay.trim().isNotEmpty) {
-      parts.add(_workOrder.plannedHalfDay.trim());
-    }
-    if (parts.isEmpty) {
+    final rawPlannedDate = _workOrder.plannedDate.trim();
+    final plannedDate = rawPlannedDate.contains('T')
+        ? rawPlannedDate.split('T').first.trim()
+        : rawPlannedDate;
+    final plannedHalfDay = _workOrder.plannedHalfDay.trim().toUpperCase();
+    if (plannedDate.isEmpty) {
       return status;
     }
-    return '$status (${parts.join(' ')})';
+    final plannedLabel = plannedHalfDay == 'AM' || plannedHalfDay == 'PM'
+        ? '$plannedDate $plannedHalfDay'
+        : plannedDate;
+    return '$status\n($plannedLabel)';
   }
 
   Widget _buildLocationField() {
@@ -1159,21 +1528,31 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
               child: _buildPendingTransferChip(),
             ),
             const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const TransferRequestListPage(
-                        initialMode: TransferRequestPageMode.outgoing,
-                      ),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.open_in_new),
-                label: const Text('Manage transfer'),
+            if (_isCurrentEngineerOwner)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: () =>
+                      _performWorkOrderAction('open_incoming_transfers'),
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Manage transfer'),
+                ),
               ),
+          ],
+          if (_buildDetailActions().isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _buildDetailActions()
+                  .map(
+                    (item) => OutlinedButton.icon(
+                      onPressed: () => _performWorkOrderAction(item.key),
+                      icon: Icon(_iconForActionButton(item.key)),
+                      label: Text(item.value),
+                    ),
+                  )
+                  .toList(),
             ),
           ],
           if (_hasManagerActions) ...[
@@ -1193,21 +1572,6 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
                   label: const Text('Cancel WO'),
                 ),
               ],
-            ),
-          ],
-          if (_canCreateTransferRequest) ...[
-            const SizedBox(height: 14),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: _openTransferRequestDialog,
-                icon: const Icon(Icons.forward_to_inbox_outlined),
-                label: Text(
-                  _isCurrentEngineerOwner
-                      ? 'Transfer / Hand Off'
-                      : 'Request Takeover',
-                ),
-              ),
             ),
           ],
         ],

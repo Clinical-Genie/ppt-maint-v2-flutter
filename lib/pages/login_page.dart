@@ -108,11 +108,28 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _initPage() async {
     await ApiPaths.loadServerSettings();
+    final restored = await LoginSessionController.instance.loadSessionFromStorage(
+      fetchUserInfo: true,
+    );
     await MLang.init(() {
       if (mounted) {
         setState(() {});
       }
     });
+    if (restored) {
+      try {
+        AppState.instance.setInstitutions(
+          await ApiController.listInstitutions(),
+        );
+        try {
+          await _loadUsersAfterLogin();
+        } catch (_) {}
+      } catch (_) {}
+      if (mounted) {
+        Navigator.of(context).pushReplacementNamed('/home');
+        return;
+      }
+    }
     if (mounted) {
       setState(() {});
     }

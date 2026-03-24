@@ -15,6 +15,8 @@ import 'package:maintapp/model/admin_email_log.dart';
 import 'package:maintapp/model/admin_result.dart';
 import 'package:maintapp/model/api_result.dart';
 import 'package:maintapp/model/email_batch.dart';
+import 'package:maintapp/model/form_template.dart';
+import 'package:maintapp/model/form_template_choice_group.dart';
 import 'package:maintapp/model/user_status_result.dart';
 import 'package:maintapp/model/user_visit.dart';
 import 'package:maintapp/model/work_order_history.dart';
@@ -190,6 +192,9 @@ class ApiPaths {
   static String startWorkOrder(String workOrderId) =>
       '/api/work-orders/$workOrderId/start-work';
   static const String emailBatches = '/api/email-batches';
+  static const String formTemplates = '/api/form-templates';
+  static String formTemplateById(String templateId) =>
+      '/api/form-templates/$templateId';
   static String emailBatchById(String batchId) => '/api/email-batches/$batchId';
   static String sendEmailBatch(String batchId) =>
       '/api/email-batches/$batchId/send';
@@ -198,6 +203,13 @@ class ApiPaths {
   static const String adminEmailLogs = '/api/admin/email-logs';
   static String adminEmailLogById(String logId) =>
       '/api/admin/email-logs/$logId';
+  static const String formTemplateChoiceGroups = '/api/form-template-choice-groups';
+  static String formTemplateChoiceGroupById(String groupId) =>
+      '/api/form-template-choice-groups/$groupId';
+  static String formTemplateChoiceGroupItems(String groupId) =>
+      '/api/form-template-choice-groups/$groupId/items';
+  static String formTemplateChoiceGroupItemById(String groupId, String itemId) =>
+      '/api/form-template-choice-groups/$groupId/items/$itemId';
   static const String institutions = '/api/institutions';
   static const String adminPing = '/api/admin/ping';
   static const String runHousekeeping = '/api/ops/housekeeping/run';
@@ -622,10 +634,188 @@ class ApiController {
     return WorkOrder.fromJson(_extractCreateWorkOrderPayload(result));
   }
 
+  static Future<FormTemplateList> listFormTemplates({String? type}) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'listFormTemplates',
+      subPath: ApiPaths.formTemplates,
+      method: 'get',
+      postParameters: const {},
+      queryParameters: {
+        if (type != null && type.trim().isNotEmpty) 'type': type.trim(),
+      },
+    );
+    return FormTemplateList.fromJson(result);
+  }
+
+  static Future<FormTemplate> getFormTemplateById(String templateId) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'getFormTemplateById',
+      subPath: ApiPaths.formTemplateById(templateId),
+      method: 'get',
+      postParameters: const {},
+    );
+    return FormTemplate.fromJson(result);
+  }
+
+  static Future<FormTemplateChoiceGroupList> listFormTemplateChoiceGroups({
+    bool includeInactive = false,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'listFormTemplateChoiceGroups',
+      subPath: ApiPaths.formTemplateChoiceGroups,
+      method: 'get',
+      postParameters: const {},
+      queryParameters: {'includeInactive': includeInactive},
+    );
+    return FormTemplateChoiceGroupList.fromJson(result);
+  }
+
+  static Future<FormTemplateChoiceGroupDetail> getFormTemplateChoiceGroup(
+    String groupId, {
+    bool includeInactive = false,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'getFormTemplateChoiceGroup',
+      subPath: ApiPaths.formTemplateChoiceGroupById(groupId),
+      method: 'get',
+      postParameters: const {},
+      queryParameters: {'includeInactive': includeInactive},
+    );
+    return FormTemplateChoiceGroupDetail.fromJson(result);
+  }
+
+  static Future<FormTemplateChoiceGroupDetail?> getFormTemplateChoiceGroupByCode(
+    String code, {
+    bool includeInactive = false,
+  }) async {
+    final list = await listFormTemplateChoiceGroups(
+      includeInactive: includeInactive,
+    );
+    final normalizedCode = code.trim().toLowerCase();
+    if (normalizedCode.isEmpty) return null;
+    final match = list.items.where((item) {
+      return item.code.trim().toLowerCase() == normalizedCode;
+    });
+    if (match.isEmpty) return null;
+    return getFormTemplateChoiceGroup(
+      match.first.id,
+      includeInactive: includeInactive,
+    );
+  }
+
+  static Future<FormTemplateChoiceGroupDetail> createFormTemplateChoiceGroup({
+    required String code,
+    required String name,
+    String? description,
+    bool isActive = true,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'createFormTemplateChoiceGroup',
+      subPath: ApiPaths.formTemplateChoiceGroups,
+      method: 'post',
+      postParameters: {
+        'code': code,
+        'name': name,
+        'description': description,
+        'is_active': isActive,
+      },
+      successStatusCodes: const [200, 201],
+    );
+    return FormTemplateChoiceGroupDetail.fromJson(result);
+  }
+
+  static Future<FormTemplateChoiceGroupDetail> updateFormTemplateChoiceGroup(
+    String groupId, {
+    String? name,
+    String? description,
+    bool? isActive,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'updateFormTemplateChoiceGroup',
+      subPath: ApiPaths.formTemplateChoiceGroupById(groupId),
+      method: 'patch',
+      postParameters: {
+        if (name != null) 'name': name,
+        if (description != null) 'description': description,
+        if (isActive != null) 'is_active': isActive,
+      },
+    );
+    return FormTemplateChoiceGroupDetail.fromJson(result);
+  }
+
+  static Future<FormTemplateChoiceItem> addFormTemplateChoiceItem(
+    String groupId, {
+    required String code,
+    required String labelEn,
+    String? labelZh,
+    int sort = 0,
+    bool isActive = true,
+    Map<String, dynamic> metaJson = const {},
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'addFormTemplateChoiceItem',
+      subPath: ApiPaths.formTemplateChoiceGroupItems(groupId),
+      method: 'post',
+      postParameters: {
+        'code': code,
+        'label_en': labelEn,
+        'label_zh': labelZh ?? '',
+        'sort': sort,
+        'is_active': isActive,
+        'meta_json': metaJson,
+      },
+      successStatusCodes: const [200, 201],
+    );
+    return FormTemplateChoiceItem.fromJson(result);
+  }
+
+  static Future<FormTemplateChoiceItem> updateFormTemplateChoiceItem(
+    String groupId,
+    String itemId, {
+    String? labelEn,
+    String? labelZh,
+    int? sort,
+    bool? isActive,
+    Map<String, dynamic>? metaJson,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'updateFormTemplateChoiceItem',
+      subPath: ApiPaths.formTemplateChoiceGroupItemById(groupId, itemId),
+      method: 'patch',
+      postParameters: {
+        if (labelEn != null) 'label_en': labelEn,
+        if (labelZh != null) 'label_zh': labelZh,
+        if (sort != null) 'sort': sort,
+        if (isActive != null) 'is_active': isActive,
+        if (metaJson != null) 'meta_json': metaJson,
+      },
+    );
+    return FormTemplateChoiceItem.fromJson(result);
+  }
+
+  static Future<String> deactivateFormTemplateChoiceItem(
+    String groupId,
+    String itemId,
+  ) async {
+    return _callMessage(
+      apiNameForLog: 'deactivateFormTemplateChoiceItem',
+      subPath: ApiPaths.formTemplateChoiceGroupItemById(groupId, itemId),
+      method: 'delete',
+      postParameters: const {},
+      fallbackMessage: 'Choice item deactivated',
+    );
+  }
+
   static String _extractApiErrorMessage(dynamic payload) {
     if (payload == null) return '';
     if (payload is String) {
       final value = payload.trim();
+      if ((value.startsWith('{') && value.endsWith('}')) ||
+          (value.startsWith('[') && value.endsWith(']'))) {
+        try {
+          return _extractApiErrorMessage(json.decode(value));
+        } catch (_) {}
+      }
       return value;
     }
     if (payload is List) {
@@ -679,6 +869,54 @@ class ApiController {
       }
     }
 
+    return '';
+  }
+
+  static String _extractApiErrorCode(dynamic payload) {
+    if (payload == null) return '';
+    if (payload is String) {
+      final value = payload.trim();
+      if ((value.startsWith('{') && value.endsWith('}')) ||
+          (value.startsWith('[') && value.endsWith(']'))) {
+        try {
+          return _extractApiErrorCode(json.decode(value));
+        } catch (_) {}
+      }
+      return '';
+    }
+    if (payload is List) {
+      for (final item in payload) {
+        final code = _extractApiErrorCode(item);
+        if (code.isNotEmpty) return code;
+      }
+      return '';
+    }
+    if (payload is Map) {
+      final map = Map<String, dynamic>.from(payload);
+      for (final key in const ['code', 'error_code', 'errorCode']) {
+        final value = map[key];
+        if (value != null) {
+          final code = '$value'.trim();
+          if (code.isNotEmpty) return code;
+        }
+      }
+      return _extractApiErrorCode(map['data']);
+    }
+    return '';
+  }
+
+  static String _formatApiErrorSummary(dynamic payload) {
+    final message = _extractApiErrorMessage(payload);
+    final code = _extractApiErrorCode(payload);
+    if (code.isNotEmpty && message.isNotEmpty) {
+      return '$code: $message';
+    }
+    if (message.isNotEmpty) {
+      return message;
+    }
+    if (code.isNotEmpty) {
+      return code;
+    }
     return '';
   }
 
@@ -908,7 +1146,7 @@ class ApiController {
 
   static Future<WorkOrderList> listWorkOrders({
     String? woType,
-    String? tab,
+    String? user,
     String? institution,
     String? ownerUserId,
     String? plannedDate,
@@ -936,7 +1174,7 @@ class ApiController {
       postParameters: const {},
       queryParameters: {
         if (woType != null && woType.isNotEmpty) 'woType': woType,
-        if (tab != null && tab.isNotEmpty) 'tab': tab,
+        if (user != null && user.isNotEmpty) 'user': user,
         if (institution != null && institution.isNotEmpty)
           'institution': institution,
         if (ownerUserId != null && ownerUserId.isNotEmpty)
@@ -1905,9 +2143,8 @@ class ApiAction {
         if (!LoginSessionController.instance.isLoggedIn()) {
           callAPIFail(
             apiNameForLog,
-            "The app is not login yet",
-            "",
-            "Please login first",
+            "Login session expired.",
+            "Please sign in again.",
             true,
           );
           return false;
@@ -2027,7 +2264,6 @@ class ApiAction {
               apiNameForLog,
               "Http method undefined: $method",
               "Calling URL: $url",
-              "Contact technical support",
               true,
             );
           }
@@ -2069,11 +2305,11 @@ class ApiAction {
             : <String, dynamic>{'data': decodedBody};
 
         if (showError) {
+          final formattedError = ApiController._formatApiErrorSummary(bodyJSON);
           callAPIFail(
             apiNameForLog,
-            "Server is not ready (response code: ${response.statusCode})",
-            json.encode(bodyJSON),
-            "Please contact technical support",
+            "Api call fail: (${response.statusCode})",
+            formattedError,
             false,
           );
         }
@@ -2085,7 +2321,6 @@ class ApiAction {
         apiNameForLog,
         "Exception happened during API call: $e",
         e.toString(),
-        "Please contact technical support",
         true,
       );
       await failAction({});
@@ -2117,9 +2352,8 @@ class ApiAction {
         if (!LoginSessionController.instance.isLoggedIn()) {
           callAPIFail(
             apiNameForLog,
-            "The app is not login yet",
-            "",
-            "Please login first",
+            "Login session expired.",
+            "Please sign in again.",
             true,
           );
           return false;
@@ -2181,12 +2415,12 @@ class ApiAction {
         final bodyJSON = decodedBody is Map
             ? Map<String, dynamic>.from(decodedBody)
             : <String, dynamic>{'data': decodedBody};
+        final formattedError = ApiController._formatApiErrorSummary(bodyJSON);
 
         callAPIFail(
           apiNameForLog,
-          "Server is not ready (response code: ${response.statusCode})",
-          json.encode(bodyJSON),
-          "Please contact technical support",
+          "Api call fail: (${response.statusCode})",
+          formattedError,
           false,
         );
       }
@@ -2198,7 +2432,6 @@ class ApiAction {
         apiNameForLog,
         "Exception happened during multipart API call: $e",
         e.toString(),
-        "Please contact technical support",
         true,
       );
       await failAction();
@@ -2210,7 +2443,7 @@ class ApiAction {
     String apiNameForLog,
     String programIssueDesc,
     String infoForDebug,
-    String suggestionToUser,
+    // String suggestionToUser,
     bool goHomeAfterTapOK,
   ) {
     goHomeAfterTapOK = false; //Should not go home
@@ -2224,10 +2457,10 @@ class ApiAction {
       reason = reason + (reason.isEmpty ? infoForDebug : "\n$infoForDebug");
     }
 
-    if (suggestionToUser.isNotEmpty) {
-      reason =
-          reason + (reason.isEmpty ? suggestionToUser : "\n$suggestionToUser");
-    }
+    // if (suggestionToUser.isNotEmpty) {
+    //   reason =
+    //       reason + (reason.isEmpty ? suggestionToUser : "\n$suggestionToUser");
+    // }
 
     //Change to show a full screen later
     // Utils.showMessage(
@@ -2236,6 +2469,11 @@ class ApiAction {
     //     ErrorMessageController.getErrorMessage(
     //         AppState.instance.apiResult.reason));
     log("API call failed: $apiNameForLog, reason: $reason");
+
+    if (apiNameForLog == 'userLogin') {
+      _showLoginFailedDialog(reason);
+      return;
+    }
 
     if (_isSessionExpiredFailure(reason)) {
       _showSessionExpiredDialog(reason);
@@ -2294,7 +2532,7 @@ class ApiAction {
       barrierDismissible: false,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('Login Required'),
+          title: const Text('Please sign in again'),
           content: Text(message),
           actions: [
             TextButton(
@@ -2310,6 +2548,33 @@ class ApiAction {
     ).whenComplete(() {
       _sessionExpiredDialogShowing = false;
     });
+  }
+
+  static void _showLoginFailedDialog(String reason) {
+    final context = MyApp.navigatorKey.currentContext;
+    if (context == null) {
+      return;
+    }
+
+    final message = ApiController._extractApiErrorMessage(reason).isNotEmpty
+        ? ApiController._extractApiErrorMessage(reason)
+        : 'Login failed. Please check your username and password.';
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Login failed'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
   }
 }
 

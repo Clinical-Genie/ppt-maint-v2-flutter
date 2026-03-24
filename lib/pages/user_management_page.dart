@@ -121,6 +121,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
                           labelText: 'Username',
                           border: OutlineInputBorder(),
                         ),
+                        autocorrect: false,
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) {
                             return 'Username is required';
@@ -135,6 +136,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
                           labelText: 'Full Name',
                           border: OutlineInputBorder(),
                         ),
+                        autocorrect: false,
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) {
                             return 'Full name is required';
@@ -150,6 +152,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
                           border: OutlineInputBorder(),
                         ),
                         keyboardType: TextInputType.emailAddress,
+                        autocorrect: false,
                       ),
                       const SizedBox(height: 12),
                       TextFormField(

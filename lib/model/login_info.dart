@@ -21,9 +21,16 @@ class LoginInfo {
     accessToken = DataHelper.getStringSafely(json, 'access_token', '');
     refreshToken = DataHelper.getStringSafely(json, 'refresh_token', '');
     expiresIn = DataHelper.getStringSafely(json, 'expires_in', '');
-    expiryDate = DateTime.now().add(
-      Duration(seconds: int.tryParse(expiresIn) ?? 900),
-    );
+    final expiryDateStr = DataHelper.getStringSafely(json, 'expiry_date', '');
+    if (expiryDateStr.isNotEmpty) {
+      expiryDate =
+          DateTime.tryParse(expiryDateStr) ??
+          DateTime.now().add(Duration(seconds: int.tryParse(expiresIn) ?? 900));
+    } else {
+      expiryDate = DateTime.now().add(
+        Duration(seconds: int.tryParse(expiresIn) ?? 900),
+      );
+    }
 
     // String expiryDateStr = DataHelper.getStringSafely(json, 'expiry_date', '');
     // try {
@@ -43,6 +50,7 @@ class LoginInfo {
     data['access_token'] = accessToken;
     data['refresh_token'] = refreshToken;
     data['expires_in'] = expiresIn;
+    data['expiry_date'] = expiryDate?.toIso8601String() ?? '';
     return data;
   }
 

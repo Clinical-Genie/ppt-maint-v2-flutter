@@ -83,7 +83,9 @@ class _LoginSessionsPageState extends State<LoginSessionsPage> {
       final message = await ApiController.revokeSession(sessionId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message.isNotEmpty ? message : 'Session revoked.')),
+          SnackBar(
+            content: Text(message.isNotEmpty ? message : 'Session revoked.'),
+          ),
         );
       }
       await _loadSessions();
@@ -106,9 +108,9 @@ class _LoginSessionsPageState extends State<LoginSessionsPage> {
     try {
       final revoked = await ApiController.revokeAllSessions();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Revoked $revoked session(s).')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Revoked $revoked session(s).')));
       }
       await _loadSessions();
     } finally {
@@ -130,8 +132,12 @@ class _LoginSessionsPageState extends State<LoginSessionsPage> {
 
   String _sessionSubLabel(Session session) {
     final ip = session.getIp().isEmpty ? '-' : session.getIp();
-    final userAgent = session.getUserAgent().isEmpty ? '-' : session.getUserAgent();
-    final lastActive = session.getLastActive().isEmpty ? '-' : session.getLastActive();
+    final userAgent = session.getUserAgent().isEmpty
+        ? '-'
+        : session.getUserAgent();
+    final lastActive = session.getLastActive().isEmpty
+        ? '-'
+        : session.getLastActive();
     final createdAt = session.createdAt.isEmpty ? '-' : session.createdAt;
     return 'IP: $ip\nLast active: $lastActive\nCreated: $createdAt\nAgent: $userAgent';
   }
@@ -214,7 +220,9 @@ class _LoginSessionsPageState extends State<LoginSessionsPage> {
                 ),
                 const SizedBox(width: 12),
                 FilledButton.icon(
-                  onPressed: _isRevokingAll || _isLoading ? null : _revokeAllSessions,
+                  onPressed: _isRevokingAll || _isLoading
+                      ? null
+                      : _revokeAllSessions,
                   icon: _isRevokingAll
                       ? const SizedBox(
                           width: 16,
@@ -248,9 +256,7 @@ class _LoginSessionsPageState extends State<LoginSessionsPage> {
             ),
             const SizedBox(height: 16),
             if (_isLoading)
-              const Expanded(
-                child: Center(child: CircularProgressIndicator()),
-              )
+              const Expanded(child: Center(child: CircularProgressIndicator()))
             else if (_filteredSessions.isEmpty)
               const Expanded(
                 child: Center(
@@ -319,7 +325,9 @@ class _LoginSessionsPageState extends State<LoginSessionsPage> {
                                           ),
                                           decoration: BoxDecoration(
                                             color: const Color(0xFFDDF7E6),
-                                            borderRadius: BorderRadius.circular(12),
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
                                           ),
                                           child: const Text(
                                             'Current',
@@ -337,13 +345,19 @@ class _LoginSessionsPageState extends State<LoginSessionsPage> {
                                           vertical: 4,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: _sessionStatusBgColor(statusLabel),
-                                          borderRadius: BorderRadius.circular(12),
+                                          color: _sessionStatusBgColor(
+                                            statusLabel,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
                                         ),
                                         child: Text(
                                           statusLabel,
                                           style: TextStyle(
-                                            color: _sessionStatusColor(statusLabel),
+                                            color: _sessionStatusColor(
+                                              statusLabel,
+                                            ),
                                             fontSize: 12,
                                             fontWeight: FontWeight.w700,
                                           ),
@@ -373,12 +387,16 @@ class _LoginSessionsPageState extends State<LoginSessionsPage> {
                             const SizedBox(width: 12),
                             if (!isCurrent && isActive)
                               IconButton(
-                                onPressed: isBusy ? null : () => _revokeSession(sessionInfo),
+                                onPressed: isBusy
+                                    ? null
+                                    : () => _revokeSession(sessionInfo),
                                 icon: isBusy
                                     ? const SizedBox(
                                         width: 18,
                                         height: 18,
-                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
                                       )
                                     : const Icon(Icons.delete_outline),
                               ),

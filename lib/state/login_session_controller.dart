@@ -1,5 +1,6 @@
 import 'dart:developer';
 import 'package:maintapp/api/api_controller.dart';
+import 'package:maintapp/common/secure_storage.dart';
 import 'package:maintapp/model/login_info.dart';
 import 'package:maintapp/model/user_info.dart';
 import 'package:maintapp/state/app_state.dart';
@@ -9,6 +10,7 @@ import 'package:maintapp/state/app_state.dart';
 class LoginSessionController {
   static final LoginSessionController instance =
       LoginSessionController(); //the single instance
+  static const String _sessionStorageGroup = 'login_session';
 
   bool isRefreshingToken = false;
   String username = "";
@@ -39,6 +41,7 @@ class LoginSessionController {
     if (isLoggedIn()) {
       this.username = username;
       userInfo = await ApiController.getMyUserInfo();
+      await _persistSession();
     }
   }
 
@@ -55,9 +58,10 @@ class LoginSessionController {
           final refreshedLoginInfo = await ApiController.userRefreshToken();
           if (refreshedLoginInfo.accessToken.isNotEmpty) {
             loginInfo = refreshedLoginInfo;
+            await _persistSession();
           } else {
             //If refresh token failed, logout locally
-            logoutLocally(resetLoginInfo: true);
+            await logoutLocally(resetLoginInfo: true);
           }
         } finally {
           isRefreshingToken = false;
@@ -66,13 +70,51 @@ class LoginSessionController {
     }
   }
 
+  Future<bool> loadSessionFromStorage({bool fetchUserInfo = true}) async {
+    final loaded = await SecureStorage.instance.loadDataFromSecureStorage(
+      _sessionStorageGroup,
+    );
+    if (!loaded) {
+      return false;
+    }
+
+    final loadedUsername = SecureStorage.instance.getData(
+      _sessionStorageGroup,
+      'username',
+      '',
+    );
+    final raw = SecureStorage.instance.data[_sessionStorageGroup] ?? {};
+    loginInfo = LoginInfo.fromJson(raw);
+    username = loadedUsername;
+
+    if (!isLoggedIn()) {
+      await _clearPersistedSession();
+      return false;
+    }
+
+    try {
+      await refreshTokenIfNeeded();
+      if (!isLoggedIn()) {
+        return false;
+      }
+      if (fetchUserInfo) {
+        userInfo = await ApiController.getMyUserInfo();
+      }
+      await _persistSession();
+      return true;
+    } catch (_) {
+      await logoutLocally(resetLoginInfo: true);
+      return false;
+    }
+  }
+
   //Logout
   Future<void> logout({bool resetLoginInfo = true}) async {
     await ApiController.userLogout();
-    logoutLocally(resetLoginInfo: resetLoginInfo);
+    await logoutLocally(resetLoginInfo: resetLoginInfo);
   }
 
-  void logoutLocally({bool resetLoginInfo = true}) {
+  Future<void> logoutLocally({bool resetLoginInfo = true}) async {
     if (resetLoginInfo) {
       loginInfo = LoginInfo();
       userInfo = UserInfo();
@@ -80,9 +122,25 @@ class LoginSessionController {
 
     username = "";
     AppState.instance.resetState();
+    await _clearPersistedSession();
   }
 
   bool hasUserRole(String role) {
     return userInfo.roles.contains(role);
+  }
+
+  Future<void> _persistSession() async {
+    SecureStorage.instance.replaceCategoryWithDataSet(_sessionStorageGroup, {
+      'username': username,
+      ...loginInfo.toJson().map(
+        (key, value) => MapEntry(key, value?.toString() ?? ''),
+      ),
+    });
+    await SecureStorage.instance.saveDataToSecureStorage(_sessionStorageGroup);
+  }
+
+  Future<void> _clearPersistedSession() async {
+    SecureStorage.instance.replaceCategoryWithDataSet(_sessionStorageGroup, {});
+    await SecureStorage.instance.saveDataToSecureStorage(_sessionStorageGroup);
   }
 }

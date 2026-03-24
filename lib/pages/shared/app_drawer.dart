@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:maintapp/main.dart';
 import 'package:maintapp/model/user_info.dart';
 import 'package:maintapp/state/login_session_controller.dart';
 
@@ -24,6 +25,7 @@ class AppDrawer extends StatelessWidget {
     final bool hasWorkOrderAccess = hasManagerRole || hasEngineerRole;
     final bool hasCreateWorkOrderAccess = hasManagerRole;
     final bool hasEmailBatchAccess = hasManagerRole || hasAdminRole;
+    final bool hasTemplateChoiceGroupAccess = hasManagerRole || hasAdminRole;
     final bool hasTransferRequestAccess = hasEngineerRole;
     final bool hasLogoutAccess = true;
 
@@ -120,6 +122,17 @@ class AppDrawer extends StatelessWidget {
                   Navigator.of(context).pushReplacementNamed('/email-batches');
                 },
               ),
+            if (hasTemplateChoiceGroupAccess)
+              ListTile(
+                leading: const Icon(Icons.list_alt),
+                title: const Text('Template Choices'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  Navigator.of(
+                    context,
+                  ).pushReplacementNamed('/template-choice-groups');
+                },
+              ),
             if (hasTransferRequestAccess)
               ListTile(
                 leading: const Icon(Icons.swap_horiz_outlined),
@@ -156,10 +169,29 @@ class AppDrawer extends StatelessWidget {
                 title: const Text('Logout'),
                 onTap: () async {
                   Navigator.of(context).pop();
-                  if (context.mounted) {
-                    Navigator.of(context).pushReplacementNamed('/login');
-                  }
-                  session.logout();
+                  showDialog<void>(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (_) => const AlertDialog(
+                      content: Row(
+                        children: [
+                          SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2.4),
+                          ),
+                          SizedBox(width: 16),
+                          Expanded(child: Text('Logging out...')),
+                        ],
+                      ),
+                    ),
+                  );
+                  await session.logout();
+                  MyApp.navigatorKey.currentState?.popUntil((route) => route.isFirst);
+                  MyApp.navigatorKey.currentState?.pushNamedAndRemoveUntil(
+                    '/login',
+                    (route) => false,
+                  );
                 },
               ),
           ],
