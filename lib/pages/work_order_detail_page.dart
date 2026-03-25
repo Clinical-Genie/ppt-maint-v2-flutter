@@ -1,3 +1,4 @@
+import 'dart:developer';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -7,6 +8,7 @@ import 'package:maintapp/api/api_controller.dart';
 import 'package:maintapp/model/work_order_attachment.dart';
 import 'package:maintapp/model/work_order.dart';
 import 'package:maintapp/model/work_order_history.dart';
+import 'package:maintapp/model/user_info.dart';
 import 'package:maintapp/pages/edit_work_order_page.dart';
 import 'package:maintapp/pages/transfer_request_list_page.dart';
 import 'package:maintapp/pages/work_order_report_pages.dart';
@@ -347,19 +349,40 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
     required String title,
     String? excludeUserId,
   }) async {
-    final allEngineers =
-        AppState.instance.allUsers
-            .where(
-              (user) =>
-                  user.roles.any((role) => role.toUpperCase() == 'ENGINEER') &&
-                  (excludeUserId == null || user.id != excludeUserId),
-            )
-            .toList()
-          ..sort(
-            (a, b) =>
-                a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()),
-          );
+    List<UserInfo> allEngineers = AppState.instance.activeEngineers
+        .where(
+          (user) =>
+              user.roles.any((role) => role.toUpperCase() == 'ENGINEER') &&
+              (excludeUserId == null || user.id != excludeUserId),
+        )
+        .toList();
+
     if (allEngineers.isEmpty) {
+      try {
+        final fetched = await ApiController.listUsers(
+          role: 'ENGINEER',
+          limit: 100,
+          offset: 0,
+          includeInactive: false,
+        ).then((list) => list.items);
+        AppState.instance.setUsers(activeEngineers: fetched, allUsers: fetched);
+        allEngineers = fetched
+            .where((user) => excludeUserId == null || user.id != excludeUserId)
+            .toList();
+      } catch (_) {}
+    }
+
+    allEngineers.sort((a, b) {
+      final aLabel = a.fullName.trim().isEmpty ? a.username : a.fullName;
+      final bLabel = b.fullName.trim().isEmpty ? b.username : b.fullName;
+      return aLabel.toLowerCase().compareTo(bLabel.toLowerCase());
+    });
+
+    if (allEngineers.isEmpty) {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No active engineer available.')),
+      );
       return null;
     }
 
@@ -377,7 +400,13 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
                     .map(
                       (user) => DropdownMenuItem<String>(
                         value: user.id,
-                        child: Text(user.fullName),
+                        child: Text(
+                          user.fullName.trim().isEmpty
+                              ? (user.username.trim().isEmpty
+                                    ? user.id
+                                    : user.username)
+                              : user.fullName,
+                        ),
                       ),
                     )
                     .toList(),
@@ -755,23 +784,15 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
         throw Exception('Login expired. Please sign in again.');
       }
 
-      if (_isDesktopSplitLayout(context) && !kIsWeb) {
-        if (!mounted) return;
-        setState(() {
-          _showDesktopAttachment = true;
-          _desktopAttachmentUrl = uri.toString();
-          _desktopAttachmentTitle = title;
-          _desktopAttachmentContentType = contentType;
-          _desktopAttachmentHeaders = {'Authorization': 'Bearer $token'};
-          _desktopAttachmentBytes = null;
-        });
-        return;
-      }
-
       final response = await http.get(
         uri,
         headers: {'Authorization': 'Bearer $token'},
       );
+
+      log(
+        "url: $url, resolvedUrl: $resolvedUrl, statusCode: ${response.statusCode}, contentType: ${response.headers['content-type']}",
+      );
+
       if (response.statusCode != 200) {
         throw Exception(
           'Open attachment failed (${response.statusCode}): ${response.reasonPhrase ?? 'Request error'}',
@@ -1576,6 +1597,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
           ],
         ],
       ),
+      _buildAttachmentsSection(),
       _buildSection(
         title: 'Location & Contact',
         children: [
@@ -1668,7 +1690,6 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
           ),
         ],
       ),
-      _buildAttachmentsSection(),
       _buildHistorySection(),
     ];
   }
@@ -1713,10 +1734,10 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
                         sections[0],
                         sections[1],
                         sections[2],
-                        sections[4],
+                        sections[3],
                       ];
                       final rightColumn = <Widget>[
-                        sections[3],
+                        sections[4],
                         sections[5],
                         sections[6],
                       ];
@@ -1817,6 +1838,8 @@ class _EmbeddedAttachmentViewerState extends State<_EmbeddedAttachmentViewer> {
   @override
   Widget build(BuildContext context) {
     final isImage = widget.contentType.toLowerCase().startsWith('image/');
+    final hasMemorySource =
+        widget.memoryBytes != null && widget.memoryBytes!.isNotEmpty;
     return SfTheme(
       data: SfThemeData(
         pdfViewerThemeData: SfPdfViewerThemeData(backgroundColor: Colors.white),
@@ -1829,7 +1852,7 @@ class _EmbeddedAttachmentViewerState extends State<_EmbeddedAttachmentViewer> {
               ? isImage
                     ? Center(
                         child: InteractiveViewer(
-                          child: widget.memoryBytes != null
+                          child: hasMemorySource
                               ? Image.memory(widget.memoryBytes!)
                               : Image.network(
                                   widget.networkUrl,
@@ -1848,20 +1871,34 @@ class _EmbeddedAttachmentViewerState extends State<_EmbeddedAttachmentViewer> {
                                 ),
                         ),
                       )
-                    : SfPdfViewer.network(
-                        widget.networkUrl,
-                        headers: widget.networkHeaders,
-                        onDocumentLoadFailed: (details) {
-                          setState(() {
-                            final rawMessage =
-                                '${details.error} ${details.description}'
-                                    .trim();
-                            _errorMessage = rawMessage.isEmpty
-                                ? 'Unable to load attachment.'
-                                : rawMessage;
-                          });
-                        },
-                      )
+                    : (hasMemorySource
+                          ? SfPdfViewer.memory(
+                              widget.memoryBytes!,
+                              onDocumentLoadFailed: (details) {
+                                setState(() {
+                                  final rawMessage =
+                                      '${details.error} ${details.description}'
+                                          .trim();
+                                  _errorMessage = rawMessage.isEmpty
+                                      ? 'Unable to load attachment.'
+                                      : rawMessage;
+                                });
+                              },
+                            )
+                          : SfPdfViewer.network(
+                              widget.networkUrl,
+                              headers: widget.networkHeaders,
+                              onDocumentLoadFailed: (details) {
+                                setState(() {
+                                  final rawMessage =
+                                      '${details.error} ${details.description}'
+                                          .trim();
+                                  _errorMessage = rawMessage.isEmpty
+                                      ? 'Unable to load attachment.'
+                                      : rawMessage;
+                                });
+                              },
+                            ))
               : Center(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
@@ -1947,10 +1984,9 @@ class _AttachmentViewerPageState extends State<_AttachmentViewerPage> {
         viewer = Center(
           child: InteractiveViewer(child: Image.memory(widget.pdfBytes!)),
         );
-      } else if (widget.hasNetworkSource && !kIsWeb && !isImage) {
-        viewer = SfPdfViewer.network(
-          widget.networkUrl!,
-          headers: widget.networkHeaders,
+      } else if (widget.hasMemorySource && !isImage) {
+        viewer = SfPdfViewer.memory(
+          widget.pdfBytes!,
           onDocumentLoadFailed: (details) {
             setState(() {
               final rawMessage = '${details.error} ${details.description}'
@@ -1961,9 +1997,10 @@ class _AttachmentViewerPageState extends State<_AttachmentViewerPage> {
             });
           },
         );
-      } else if (widget.hasMemorySource && !isImage) {
-        viewer = SfPdfViewer.memory(
-          widget.pdfBytes!,
+      } else if (widget.hasNetworkSource && !kIsWeb && !isImage) {
+        viewer = SfPdfViewer.network(
+          widget.networkUrl!,
+          headers: widget.networkHeaders,
           onDocumentLoadFailed: (details) {
             setState(() {
               final rawMessage = '${details.error} ${details.description}'

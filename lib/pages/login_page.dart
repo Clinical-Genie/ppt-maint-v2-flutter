@@ -21,6 +21,7 @@ class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
+  bool _isInitializing = true;
   bool _isLoading = false;
   bool _obscurePassword = true;
 
@@ -61,6 +62,7 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _submit() async {
+    if (_isInitializing) return;
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
@@ -107,31 +109,35 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _initPage() async {
-    await ApiPaths.loadServerSettings();
-    final restored = await LoginSessionController.instance.loadSessionFromStorage(
-      fetchUserInfo: true,
-    );
-    await MLang.init(() {
-      if (mounted) {
-        setState(() {});
-      }
-    });
-    if (restored) {
-      try {
-        AppState.instance.setInstitutions(
-          await ApiController.listInstitutions(),
-        );
+    try {
+      await ApiPaths.loadServerSettings();
+      final restored = await LoginSessionController.instance
+          .loadSessionFromStorage(fetchUserInfo: true);
+      await MLang.init(() {
+        if (mounted) {
+          setState(() {});
+        }
+      });
+      if (restored) {
         try {
-          await _loadUsersAfterLogin();
+          AppState.instance.setInstitutions(
+            await ApiController.listInstitutions(),
+          );
+          try {
+            await _loadUsersAfterLogin();
+          } catch (_) {}
         } catch (_) {}
-      } catch (_) {}
-      if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/home');
-        return;
+        if (mounted) {
+          Navigator.of(context).pushReplacementNamed('/home');
+          return;
+        }
       }
-    }
-    if (mounted) {
-      setState(() {});
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isInitializing = false;
+        });
+      }
     }
   }
 
@@ -252,55 +258,59 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: Image.asset(
-              'assets/images/login_page/login_bg.jpeg',
-              fit: BoxFit.cover,
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Image.asset(
+                'assets/images/login_page/login_bg.jpeg',
+                fit: BoxFit.cover,
+              ),
             ),
-          ),
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: 0.55),
-                    Colors.black.withValues(alpha: 0.70),
-                  ],
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.55),
+                      Colors.black.withValues(alpha: 0.70),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-          Positioned(
-            top: 12,
-            right: 12,
-            child: SafeArea(
-              child: IconButton.filledTonal(
-                onPressed: _openServerSettings,
-                icon: const Icon(Icons.settings),
-                tooltip: 'Server Settings',
+            Positioned(
+              top: 12,
+              right: 12,
+              child: SafeArea(
+                child: IconButton.filledTonal(
+                  onPressed: _openServerSettings,
+                  icon: const Icon(Icons.settings),
+                  tooltip: 'Server Settings',
+                ),
               ),
             ),
-          ),
-          SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final width = constraints.maxWidth;
+            SafeArea(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final width = constraints.maxWidth;
 
-                if (width >= 1100) {
-                  return _buildDesktopLayout();
-                }
-                if (width >= 700) {
-                  return _buildTabletLayout();
-                }
-                return _buildMobileLayout();
-              },
+                  if (width >= 1100) {
+                    return _buildDesktopLayout();
+                  }
+                  if (width >= 700) {
+                    return _buildTabletLayout();
+                  }
+                  return _buildMobileLayout();
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -636,14 +646,14 @@ class _LoginPageState extends State<LoginPage> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _isLoading ? null : _submit,
+                  onPressed: (_isLoading || _isInitializing) ? null : _submit,
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: _isLoading
+                  child: (_isLoading || _isInitializing)
                       ? const SizedBox(
                           height: 20,
                           width: 20,

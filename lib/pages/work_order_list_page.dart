@@ -298,9 +298,13 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
   bool get _usesEngineerPools => _hasEngineerRole;
 
   bool get _isPublicPool => _selectedPool == 'public_pool';
+  bool get _isCancelledPool => _selectedPool == 'cancelled_pool';
+  bool get _isMyWOsPool => _selectedPool == 'my_wos';
+  bool get _isOthersWOsPool => _selectedPool == 'others_wos';
 
   bool get _showEngineerFilter =>
       !_isPublicPool &&
+      !_isCancelledPool &&
       ((_usesEngineerPools && _selectedPool == 'others_wos') ||
           (!_usesEngineerPools && _selectedPool == 'picked_wos'));
 
@@ -309,6 +313,9 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
   List<String> get _allowedStatusesForCurrentContext {
     if (_isPublicPool) {
       return const ['unassigned'];
+    }
+    if (_isCancelledPool) {
+      return const ['cancelled'];
     }
 
     if (_usesEngineerPools) {
@@ -323,8 +330,6 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
           return const ['completed'];
         case 'ended':
           return const ['signed', 'signed_edited', 'approved', 'email_sent'];
-        case 'cancelled':
-          return const ['cancelled'];
         case 'all':
         default:
           return const [
@@ -352,8 +357,6 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         return const ['approved'];
       case 'ended':
         return const ['email_sent'];
-      case 'cancelled':
-        return const ['cancelled'];
       case 'all':
       default:
         return const [
@@ -387,14 +390,20 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         ('public_pool', 'Public Pool'),
         ('my_wos', 'My WOs'),
         ('others_wos', "Other's WOs"),
+        ('cancelled_pool', 'Cancelled'),
       ];
     }
-    return const [('public_pool', 'Public Pool'), ('picked_wos', 'Picked WOs')];
+    return const [
+      ('public_pool', 'Public Pool'),
+      ('picked_wos', 'Picked WOs'),
+      ('cancelled_pool', 'Cancelled'),
+    ];
   }
 
   List<(String, String)> get _groupOptions {
-    if (_isPublicPool) return const [];
+    if (_isPublicPool || _isCancelledPool) return const [];
     if (_usesEngineerPools) {
+      if (_isMyWOsPool) {}
       return const [
         ('picked', 'Picked'),
         ('scheduled', 'Scheduled'),
@@ -402,7 +411,16 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         ('need_sign', 'Need sign'),
         ('ended', 'Ended'),
         ('all', 'All'),
-        ('cancelled', 'Cancelled'),
+      ];
+    }
+    if (_isOthersWOsPool) {
+      return const [
+        ('all', 'All'),
+        ('picked', 'Picked'),
+        ('scheduled', 'Scheduled'),
+        ('working', 'Working'),
+        ('need_sign', 'Need sign'),
+        ('ended', 'Ended'),
       ];
     }
     return const [
@@ -412,12 +430,11 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       ('need_send_email', 'Need send email'),
       ('ended', 'Ended'),
       ('all', 'All'),
-      ('cancelled', 'Cancelled'),
     ];
   }
 
   String _defaultGroupForPool(String pool) {
-    if (pool == 'public_pool') {
+    if (pool == 'public_pool' || pool == 'cancelled_pool') {
       return '';
     } else if (pool == 'others_wos') {
       return 'all';
@@ -1765,6 +1782,10 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     required bool hasManagerRole,
     required bool hasEngineerRole,
   }) {
+    final isCritical = _isPriorityCritical(item);
+    final rowBackgroundColor = isCritical
+        ? const Color(0xFFFFF1F2)
+        : Colors.white;
     final ownerName = _ownerDisplayName(item);
     final hasWorkOrderIndicators = _hasWorkOrderIndicators(item);
     final workOrderIcons = _buildWorkOrderIcons(
@@ -1781,7 +1802,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     ].join(' - ');
     final issueText = _buildDescriptionWithRemark(item);
     return Card(
-      color: Colors.white,
+      color: rowBackgroundColor,
       elevation: 0.5,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
@@ -1995,6 +2016,10 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     required double statusWidth,
     required double actionsWidth,
   }) {
+    final isCritical = _isPriorityCritical(item);
+    final rowBackgroundColor = isCritical
+        ? const Color(0xFFFFF1F2)
+        : Colors.white;
     final ownerName = _ownerDisplayName(item);
     final hasWorkOrderIndicators = _hasWorkOrderIndicators(item);
     final workOrderIcons = _buildWorkOrderIcons(
@@ -2056,8 +2081,8 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     );
 
     return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      decoration: BoxDecoration(
+        color: rowBackgroundColor,
         border: Border(
           left: BorderSide(color: Color(0xFFE2E8F0)),
           right: BorderSide(color: Color(0xFFE2E8F0)),
@@ -2536,7 +2561,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     final options = _poolOptions;
     final screenWidth = MediaQuery.of(context).size.width;
     final veryCompact =
-        (useCompactLayout && screenWidth < 430) || screenWidth >= 1200;
+        (useCompactLayout && screenWidth <= 440) || screenWidth >= 1200;
     if (useCompactLayout || screenWidth >= 1200) {
       return Wrap(
         spacing: 6,
@@ -2615,7 +2640,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       return const SizedBox.shrink();
     }
     final screenWidth = MediaQuery.of(context).size.width;
-    final veryCompact = screenWidth < 430 || screenWidth >= 1200;
+    final veryCompact = screenWidth <= 440 || screenWidth >= 1200;
     return Wrap(
       spacing: veryCompact ? 4 : 6,
       runSpacing: veryCompact ? 4 : 6,
@@ -2665,6 +2690,8 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     switch (value) {
       case 'public_pool':
         return Icons.move_to_inbox_outlined;
+      case 'cancelled_pool':
+        return Icons.cancel_outlined;
       case 'my_wos':
         return Icons.assignment_ind_outlined;
       case 'others_wos':
@@ -3188,7 +3215,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            if (screenWidth < 430) ...[
+                            if (screenWidth <= 440) ...[
                               Text(
                                 _mobileSelectionSummary,
                                 style: const TextStyle(
