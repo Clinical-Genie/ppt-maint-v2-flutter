@@ -1,23 +1,23 @@
 import 'dart:developer';
-import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 import 'package:maintapp/api/api_controller.dart';
 import 'package:maintapp/model/work_order_attachment.dart';
 import 'package:maintapp/model/work_order.dart';
+import 'package:maintapp/model/work_order_form.dart';
 import 'package:maintapp/model/work_order_history.dart';
 import 'package:maintapp/model/user_info.dart';
 import 'package:maintapp/pages/edit_work_order_page.dart';
 import 'package:maintapp/pages/transfer_request_list_page.dart';
 import 'package:maintapp/pages/work_order_report_pages.dart';
+import 'package:maintapp/pages/work_order_report_sign_page.dart';
 import 'package:maintapp/state/app_state.dart';
 import 'package:maintapp/state/login_session_controller.dart';
-import 'package:maintapp/widgets/pdf_embed_view.dart';
-import 'package:syncfusion_flutter_core/theme.dart';
-import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:maintapp/widgets/work_order_pdf_viewer.dart';
 
 class WorkOrderDetailPage extends StatefulWidget {
   const WorkOrderDetailPage({required this.workOrderId, super.key});
@@ -29,21 +29,36 @@ class WorkOrderDetailPage extends StatefulWidget {
 }
 
 class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
+  static const List<String> _allowedAttachmentExtensions = [
+    'pdf',
+    'png',
+    'jpg',
+    'jpeg',
+    'gif',
+    'webp',
+    'heic',
+    'heif',
+  ];
   bool _isLoading = true;
   bool _isLoadingHistory = true;
   bool _isLoadingAttachments = true;
   bool _isOpeningAttachment = false;
+  bool _isMutatingAttachment = false;
   WorkOrder _workOrder = WorkOrder();
+  WorkOrderForm _workOrderForm = WorkOrderForm();
   WorkOrderHistoryResponse _history = WorkOrderHistoryResponse();
   List<WorkOrderAttachment> _attachments = [];
+  String _attachmentAccessMessage = '';
   bool _showDesktopAttachment = false;
   String _desktopAttachmentUrl = '';
   String _desktopAttachmentTitle = '';
+  String _desktopAttachmentDescription = '';
   String _desktopAttachmentContentType = '';
   Map<String, String> _desktopAttachmentHeaders = const {};
   Uint8List? _desktopAttachmentBytes;
   final Set<String> _expandedHistoryIds = <String>{};
   bool _showHistory = false;
+  int _overlaySuspendDepth = 0;
 
   @override
   void initState() {
@@ -56,20 +71,35 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
       _isLoading = true;
       _isLoadingHistory = true;
       _isLoadingAttachments = true;
+      _attachmentAccessMessage = '';
     });
     try {
       final order = await ApiController.getWorkOrderById(widget.workOrderId);
       final history = await ApiController.getWorkOrderHistory(
         widget.workOrderId,
       );
-      final attachments = await ApiController.getWorkOrderAttachments(
-        widget.workOrderId,
-      );
+      final canViewAttachments = _canViewAttachments(order);
+      final attachments = canViewAttachments
+          ? await ApiController.getWorkOrderAttachments(
+              widget.workOrderId,
+              showError: false,
+            )
+          : WorkOrderAttachmentList();
+      WorkOrderForm form = WorkOrderForm();
+      try {
+        form = await ApiController.getWorkOrderForm(widget.workOrderId);
+      } catch (_) {
+        form = WorkOrderForm();
+      }
       if (!mounted) return;
       setState(() {
         _workOrder = order;
+        _workOrderForm = form;
         _history = history;
         _attachments = attachments.items;
+        _attachmentAccessMessage = canViewAttachments
+            ? ''
+            : 'You do not have permission to view attachments for this work order.';
       });
     } finally {
       if (mounted) {
@@ -82,8 +112,78 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
     }
   }
 
+  Future<void> _reloadAttachmentAndHistory() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingHistory = true;
+      _isLoadingAttachments = true;
+      _attachmentAccessMessage = '';
+    });
+
+    try {
+      final history = await ApiController.getWorkOrderHistory(
+        widget.workOrderId,
+      );
+      final canViewAttachments = _canViewAttachments(_workOrder);
+      final attachments = canViewAttachments
+          ? await ApiController.getWorkOrderAttachments(
+              widget.workOrderId,
+              showError: false,
+            )
+          : WorkOrderAttachmentList();
+
+      if (!mounted) return;
+      setState(() {
+        _history = history;
+        _attachments = attachments.items;
+        _attachmentAccessMessage = canViewAttachments
+            ? ''
+            : 'You do not have permission to view attachments for this work order.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingHistory = false;
+          _isLoadingAttachments = false;
+        });
+      }
+    }
+  }
+
   bool _isDesktopSplitLayout(BuildContext context) {
     return MediaQuery.of(context).size.width >= 1200;
+  }
+
+  void _closeDesktopAttachmentViewer() {
+    _showDesktopAttachment = false;
+    _desktopAttachmentUrl = '';
+    _desktopAttachmentTitle = '';
+    _desktopAttachmentDescription = '';
+    _desktopAttachmentContentType = '';
+    _desktopAttachmentHeaders = const {};
+    _desktopAttachmentBytes = null;
+  }
+
+  bool get _suspendWebPdfPreview => kIsWeb && _overlaySuspendDepth > 0;
+
+  Future<T?> _runWithOverlaySuspended<T>(Future<T?> Function() action) async {
+    if (!kIsWeb) {
+      return action();
+    }
+    if (mounted) {
+      setState(() {
+        _overlaySuspendDepth += 1;
+      });
+    }
+    try {
+      return await action();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _overlaySuspendDepth = (_overlaySuspendDepth - 1).clamp(0, 9999);
+        });
+      }
+    }
   }
 
   bool _hasRole(String role) {
@@ -134,6 +234,64 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
             LoginSessionController.instance.userInfo.id;
   }
 
+  bool _canViewAttachments(WorkOrder order) {
+    if (_hasManagerActions) {
+      return order.status.trim().toLowerCase() != 'cancelled';
+    }
+    return _hasEngineerRole && _isMine(order);
+  }
+
+  bool get _managerCanMutateAttachments =>
+      _hasManagerActions &&
+      _workOrder.status.trim().toLowerCase() != 'cancelled';
+
+  bool get _engineerOwnerCanAddAttachmentWithoutReason {
+    const allowedStatuses = {
+      'assigned',
+      'planned',
+      'working',
+      'completed',
+      'cannot_completed',
+    };
+    return _hasEngineerRole &&
+        _isMine(_workOrder) &&
+        allowedStatuses.contains(_workOrder.status.trim().toLowerCase());
+  }
+
+  bool get _engineerOwnerCanAddAttachmentWithReason {
+    return _hasEngineerRole &&
+        _isMine(_workOrder) &&
+        _workOrder.status.trim().toLowerCase() == 'signed';
+  }
+
+  bool get _canAddAttachment =>
+      _managerCanMutateAttachments ||
+      _engineerOwnerCanAddAttachmentWithoutReason ||
+      _engineerOwnerCanAddAttachmentWithReason;
+
+  bool get _addAttachmentRequiresReason =>
+      !_managerCanMutateAttachments && _engineerOwnerCanAddAttachmentWithReason;
+
+  bool get _engineerOwnerCanDeleteAttachment {
+    const allowedStatuses = {
+      'assigned',
+      'planned',
+      'working',
+      'cannot_completed',
+      'completed',
+      'signed',
+    };
+    return _hasEngineerRole &&
+        _isMine(_workOrder) &&
+        allowedStatuses.contains(_workOrder.status.trim().toLowerCase());
+  }
+
+  bool get _canDeleteAttachment =>
+      _managerCanMutateAttachments || _engineerOwnerCanDeleteAttachment;
+
+  bool get _deleteAttachmentRequiresReason =>
+      !_managerCanMutateAttachments && _engineerOwnerCanDeleteAttachment;
+
   List<MapEntry<String, String>> get _availableTransferTargets {
     final currentUserId = LoginSessionController.instance.userInfo.id;
     final engineers = AppState.instance.activeEngineers.isNotEmpty
@@ -180,169 +338,391 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
         ? targets.first.key
         : LoginSessionController.instance.userInfo.id;
 
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        bool submitting = false;
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: Text(
-                isHandoff ? 'Transfer / Hand Off' : 'Request Takeover',
-              ),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (isHandoff)
-                      DropdownButtonFormField<String>(
-                        initialValue: selectedEngineerId,
-                        items: targets
-                            .map(
-                              (entry) => DropdownMenuItem<String>(
-                                value: entry.key,
-                                child: Text(entry.value),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) {
-                          if (value == null) return;
-                          setDialogState(() => selectedEngineerId = value);
-                        },
-                        decoration: const InputDecoration(
-                          labelText: 'Target engineer',
-                          border: OutlineInputBorder(),
-                        ),
-                      )
-                    else
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 14,
-                        ),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: const Color(0xFFCBD5E1)),
-                          borderRadius: BorderRadius.circular(12),
-                          color: const Color(0xFFF8FAFC),
-                        ),
-                        child: Text(
-                          'This request will be sent to the current owner and target you as the new engineer.',
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: Color(0xFF475569),
+    await _runWithOverlaySuspended(
+      () => showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          bool submitting = false;
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: Text(
+                  isHandoff ? 'Transfer / Hand Off' : 'Request Takeover',
+                ),
+                content: SizedBox(
+                  width: 420,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isHandoff)
+                        DropdownButtonFormField<String>(
+                          initialValue: selectedEngineerId,
+                          items: targets
+                              .map(
+                                (entry) => DropdownMenuItem<String>(
+                                  value: entry.key,
+                                  child: Text(entry.value),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setDialogState(() => selectedEngineerId = value);
+                          },
+                          decoration: const InputDecoration(
+                            labelText: 'Target engineer',
+                            border: OutlineInputBorder(),
+                          ),
+                        )
+                      else
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 14,
+                          ),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: const Color(0xFFCBD5E1)),
+                            borderRadius: BorderRadius.circular(12),
+                            color: const Color(0xFFF8FAFC),
+                          ),
+                          child: Text(
+                            'This request will be sent to the current owner and target you as the new engineer.',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF475569),
+                            ),
                           ),
                         ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: reasonController,
+                        maxLines: 4,
+                        decoration: const InputDecoration(
+                          labelText: 'Reason',
+                          border: OutlineInputBorder(),
+                        ),
                       ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: reasonController,
-                      maxLines: 4,
-                      decoration: const InputDecoration(
-                        labelText: 'Reason',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: submitting
-                      ? null
-                      : () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: submitting
-                      ? null
-                      : () async {
-                          final reason = reasonController.text.trim();
-                          if (reason.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Reason is required.'),
-                              ),
-                            );
-                            return;
-                          }
-                          setDialogState(() => submitting = true);
-                          try {
-                            await ApiController.createTransferRequest(
-                              _workOrder.id,
-                              toEngineerId: selectedEngineerId,
-                              reason: reason,
-                            );
-                            if (!mounted) return;
-                            if (dialogContext.mounted) {
-                              Navigator.of(dialogContext).pop();
-                            }
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  isHandoff
-                                      ? 'Transfer request created.'
-                                      : 'Takeover request created.',
+                actions: [
+                  TextButton(
+                    onPressed: submitting
+                        ? null
+                        : () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton(
+                    onPressed: submitting
+                        ? null
+                        : () async {
+                            final reason = reasonController.text.trim();
+                            if (reason.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Reason is required.'),
                                 ),
-                              ),
-                            );
-                            await _load();
-                          } catch (e) {
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(
-                              context,
-                            ).showSnackBar(SnackBar(content: Text('$e')));
-                          } finally {
-                            if (dialogContext.mounted) {
-                              setDialogState(() => submitting = false);
+                              );
+                              return;
                             }
-                          }
-                        },
-                  child: const Text('Submit'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+                            setDialogState(() => submitting = true);
+                            try {
+                              await ApiController.createTransferRequest(
+                                _workOrder.id,
+                                toEngineerId: selectedEngineerId,
+                                reason: reason,
+                              );
+                              if (!mounted) return;
+                              if (dialogContext.mounted) {
+                                Navigator.of(dialogContext).pop();
+                              }
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    isHandoff
+                                        ? 'Transfer request created.'
+                                        : 'Takeover request created.',
+                                  ),
+                                ),
+                              );
+                              await _load();
+                            } catch (e) {
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(
+                                context,
+                              ).showSnackBar(SnackBar(content: Text('$e')));
+                            } finally {
+                              if (dialogContext.mounted) {
+                                setDialogState(() => submitting = false);
+                              }
+                            }
+                          },
+                    child: const Text('Submit'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
   Future<String?> _promptReason(String title, {bool required = true}) async {
     final controller = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(title),
-          content: TextField(
-            controller: controller,
-            maxLines: 4,
-            decoration: const InputDecoration(
-              labelText: 'Reason',
-              border: OutlineInputBorder(),
+    return _runWithOverlaySuspended(
+      () => showDialog<String>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: Text(title),
+            content: TextField(
+              controller: controller,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'Reason',
+                border: OutlineInputBorder(),
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final value = controller.text.trim();
-                if (required && value.isEmpty) {
-                  return;
-                }
-                Navigator.of(dialogContext).pop(value);
-              },
-              child: const Text('Confirm'),
-            ),
-          ],
-        );
-      },
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final value = controller.text.trim();
+                  if (required && value.isEmpty) {
+                    return;
+                  }
+                  Navigator.of(dialogContext).pop(value);
+                },
+                child: const Text('Confirm'),
+              ),
+            ],
+          );
+        },
+      ),
     );
+  }
+
+  String _contentTypeForAttachmentName(String filename) {
+    final normalized = filename.trim().toLowerCase();
+    if (normalized.endsWith('.pdf')) return 'application/pdf';
+    if (normalized.endsWith('.png')) return 'image/png';
+    if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    if (normalized.endsWith('.gif')) return 'image/gif';
+    if (normalized.endsWith('.webp')) return 'image/webp';
+    if (normalized.endsWith('.heic')) return 'image/heic';
+    if (normalized.endsWith('.heif')) return 'image/heif';
+    return 'application/octet-stream';
+  }
+
+  bool get _useMobileAttachmentSourcePicker {
+    if (kIsWeb) return false;
+    return defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.android;
+  }
+
+  Future<String?> _promptAttachmentSource() async {
+    return _runWithOverlaySuspended(
+      () => showModalBottomSheet<String>(
+        context: context,
+        builder: (sheetContext) {
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.photo_library_outlined),
+                  title: const Text('Photo Album'),
+                  onTap: () => Navigator.of(sheetContext).pop('photo_album'),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.folder_open_outlined),
+                  title: const Text('Files'),
+                  onTap: () => Navigator.of(sheetContext).pop('files'),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.close),
+                  title: const Text('Cancel'),
+                  onTap: () => Navigator.of(sheetContext).pop(),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<({Uint8List bytes, String filename, String contentType})?>
+  _pickAttachmentFromPhotoAlbum() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: ImageSource.gallery);
+    if (picked == null) return null;
+
+    final bytes = await picked.readAsBytes();
+    if (bytes.isEmpty) return null;
+
+    final filename = picked.name.trim().isEmpty
+        ? 'attachment.jpg'
+        : picked.name;
+    return (
+      bytes: bytes,
+      filename: filename,
+      contentType: _contentTypeForAttachmentName(filename),
+    );
+  }
+
+  Future<({Uint8List bytes, String filename, String contentType})?>
+  _pickAttachmentFromFiles() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: _allowedAttachmentExtensions,
+      withData: true,
+    );
+    if (picked == null || picked.files.isEmpty) return null;
+    final file = picked.files.first;
+    if (file.bytes == null || file.bytes!.isEmpty) return null;
+
+    final filename = file.name.trim().isEmpty ? 'attachment' : file.name;
+    return (
+      bytes: file.bytes!,
+      filename: filename,
+      contentType: _contentTypeForAttachmentName(filename),
+    );
+  }
+
+  Future<({String reason, String description})?> _promptAttachmentMetadata({
+    required bool requireReason,
+  }) async {
+    return _runWithOverlaySuspended(
+      () => showDialog<({String reason, String description})>(
+        context: context,
+        builder: (dialogContext) {
+          return _AttachmentMetadataDialog(requireReason: requireReason);
+        },
+      ),
+    );
+  }
+
+  Future<void> _addAttachment() async {
+    if (!_canAddAttachment || _isMutatingAttachment) return;
+
+    try {
+      final source = _useMobileAttachmentSourcePicker
+          ? await _promptAttachmentSource()
+          : 'files';
+      if (source == null || source.isEmpty) return;
+
+      final picked = source == 'photo_album'
+          ? await _pickAttachmentFromPhotoAlbum()
+          : await _pickAttachmentFromFiles();
+      if (picked == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Selected attachment has no content.')),
+        );
+        return;
+      }
+
+      if (_showDesktopAttachment && mounted) {
+        setState(_closeDesktopAttachmentViewer);
+      }
+
+      final metadata = await _promptAttachmentMetadata(
+        requireReason: _addAttachmentRequiresReason,
+      );
+      if (metadata == null) return;
+
+      setState(() => _isMutatingAttachment = true);
+      final message = await ApiController.uploadWorkOrderAttachment(
+        _workOrder.id,
+        fileBytes: picked.bytes,
+        filename: picked.filename,
+        contentType: picked.contentType,
+        reason: metadata.reason,
+        description: metadata.description,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+      await _reloadAttachmentAndHistory();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Add attachment failed: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => _isMutatingAttachment = false);
+      }
+    }
+  }
+
+  Future<void> _deleteAttachment(WorkOrderAttachment attachment) async {
+    if (!_canDeleteAttachment || _isMutatingAttachment) return;
+
+    final displayLabel = _attachmentDisplayLabel(attachment);
+
+    final confirmed = await _runWithOverlaySuspended(
+      () => showDialog<bool>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('Delete attachment'),
+            content: Text('Delete "$displayLabel" from this work order?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Delete'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    String reason = '';
+    if (_deleteAttachmentRequiresReason) {
+      final input = await _promptReason('Delete attachment reason');
+      if (input == null || input.trim().isEmpty) return;
+      reason = input.trim();
+    }
+
+    try {
+      setState(() => _isMutatingAttachment = true);
+      final message = await ApiController.deleteWorkOrderAttachment(
+        _workOrder.id,
+        attachment.id,
+        reason: reason,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+      await _reloadAttachmentAndHistory();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Delete attachment failed: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => _isMutatingAttachment = false);
+      }
+    }
   }
 
   Future<String?> _promptEngineerId({
@@ -387,64 +767,68 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
     }
 
     String selectedUserId = allEngineers.first.id;
-    return showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: Text(title),
-              content: DropdownButtonFormField<String>(
-                initialValue: selectedUserId,
-                items: allEngineers
-                    .map(
-                      (user) => DropdownMenuItem<String>(
-                        value: user.id,
-                        child: Text(
-                          user.fullName.trim().isEmpty
-                              ? (user.username.trim().isEmpty
-                                    ? user.id
-                                    : user.username)
-                              : user.fullName,
+    return _runWithOverlaySuspended(
+      () => showDialog<String>(
+        context: context,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: Text(title),
+                content: DropdownButtonFormField<String>(
+                  initialValue: selectedUserId,
+                  items: allEngineers
+                      .map(
+                        (user) => DropdownMenuItem<String>(
+                          value: user.id,
+                          child: Text(
+                            user.fullName.trim().isEmpty
+                                ? (user.username.trim().isEmpty
+                                      ? user.id
+                                      : user.username)
+                                : user.fullName,
+                          ),
                         ),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  if (value == null || value.isEmpty) return;
-                  setDialogState(() => selectedUserId = value);
-                },
-                decoration: const InputDecoration(
-                  labelText: 'Engineer',
-                  border: OutlineInputBorder(),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value == null || value.isEmpty) return;
+                    setDialogState(() => selectedUserId = value);
+                  },
+                  decoration: const InputDecoration(
+                    labelText: 'Engineer',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () =>
-                      Navigator.of(dialogContext).pop(selectedUserId),
-                  child: const Text('Confirm'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () =>
+                        Navigator.of(dialogContext).pop(selectedUserId),
+                    child: const Text('Confirm'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
   Future<({DateTime plannedDate, String plannedHalfDay})?> _promptSchedule(
     String title,
   ) async {
-    final pickedDate = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime.now().subtract(const Duration(days: 365)),
-      lastDate: DateTime.now().add(const Duration(days: 3650)),
+    final pickedDate = await _runWithOverlaySuspended(
+      () => showDatePicker(
+        context: context,
+        initialDate: DateTime.now(),
+        firstDate: DateTime.now().subtract(const Duration(days: 365)),
+        lastDate: DateTime.now().add(const Duration(days: 3650)),
+      ),
     );
     if (pickedDate == null || !mounted) {
       return null;
@@ -452,63 +836,65 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
 
     String selectedHalfDay = 'am';
     if (!mounted) return null;
-    final result = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Schedule session'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title),
-                  const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('AM'),
-                        selected: selectedHalfDay == 'am',
-                        onSelected: (_) => setDialogState(() {
-                          selectedHalfDay = 'am';
-                        }),
-                      ),
-                      ChoiceChip(
-                        label: const Text('PM'),
-                        selected: selectedHalfDay == 'pm',
-                        onSelected: (_) => setDialogState(() {
-                          selectedHalfDay = 'pm';
-                        }),
-                      ),
-                      ChoiceChip(
-                        label: const Text('Full day'),
-                        selected: selectedHalfDay == 'full_day',
-                        onSelected: (_) => setDialogState(() {
-                          selectedHalfDay = 'full_day';
-                        }),
-                      ),
-                    ],
+    final result = await _runWithOverlaySuspended(
+      () => showDialog<String>(
+        context: context,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: const Text('Schedule session'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title),
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ChoiceChip(
+                          label: const Text('AM'),
+                          selected: selectedHalfDay == 'am',
+                          onSelected: (_) => setDialogState(() {
+                            selectedHalfDay = 'am';
+                          }),
+                        ),
+                        ChoiceChip(
+                          label: const Text('PM'),
+                          selected: selectedHalfDay == 'pm',
+                          onSelected: (_) => setDialogState(() {
+                            selectedHalfDay = 'pm';
+                          }),
+                        ),
+                        ChoiceChip(
+                          label: const Text('Full day'),
+                          selected: selectedHalfDay == 'full_day',
+                          onSelected: (_) => setDialogState(() {
+                            selectedHalfDay = 'full_day';
+                          }),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () =>
+                        Navigator.of(dialogContext).pop(selectedHalfDay),
+                    child: const Text('Confirm'),
                   ),
                 ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () =>
-                      Navigator.of(dialogContext).pop(selectedHalfDay),
-                  child: const Text('Confirm'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+              );
+            },
+          );
+        },
+      ),
     );
 
     if (result == null || result.isEmpty) return null;
@@ -616,12 +1002,25 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
       } else if (action == 'sign') {
         final updated = await Navigator.of(context).push<bool>(
           MaterialPageRoute(
-            builder: (_) => WorkOrderSignPage(workOrder: _workOrder),
+            builder: (_) => WorkOrderReportSignPage(workOrder: _workOrder),
           ),
         );
         if (updated == true) {
           await _load();
         }
+        return;
+      } else if (action == 'edit_report') {
+        final updated = await Navigator.of(context).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => WorkOrderReportFormPage(workOrder: _workOrder),
+          ),
+        );
+        if (updated == true) {
+          await _load();
+        }
+        return;
+      } else if (action == 'add_attachment') {
+        await _addAttachment();
         return;
       } else if (action == 'view_report') {
         feedback = 'View Report page is not wired yet.';
@@ -675,6 +1074,10 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
       }
     }
 
+    // if (_canAddAttachment) {
+    //   items.add(const MapEntry('add_attachment', 'Add Attachment'));
+    // }
+
     if (_hasEngineerRole) {
       if (_isUnassigned(_workOrder)) {
         items.add(const MapEntry('take', 'Take it'));
@@ -702,7 +1105,8 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
           items.add(const MapEntry('fill_report', 'Fill report'));
           items.add(const MapEntry('cannot_complete', 'Cannot complete'));
         } else if (normalizedStatus == 'completed') {
-          items.add(const MapEntry('sign', 'Sign'));
+          items.add(const MapEntry('sign', 'Review and Sign'));
+          items.add(const MapEntry('edit_report', 'Edit Report'));
         }
       } else if (_isAssignedToOthers(_workOrder)) {
         if (normalizedStatus == 'assigned' || normalizedStatus == 'planned') {
@@ -737,8 +1141,12 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
         return Icons.description_outlined;
       case 'sign':
         return Icons.draw_outlined;
+      case 'edit_report':
+        return Icons.edit_outlined;
       case 'view_report':
         return Icons.visibility_outlined;
+      case 'add_attachment':
+        return Icons.attach_file_outlined;
       case 'send_email':
         return Icons.send_outlined;
       case 'open_incoming_transfers':
@@ -766,6 +1174,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
     String url,
     String title, {
     String contentType = '',
+    String description = '',
     bool preload = false,
   }) async {
     final resolvedUrl = ApiController.resolveServerUrl(url);
@@ -810,6 +1219,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
           _showDesktopAttachment = true;
           _desktopAttachmentUrl = uri.toString();
           _desktopAttachmentTitle = title;
+          _desktopAttachmentDescription = description.trim();
           _desktopAttachmentContentType = contentType;
           _desktopAttachmentHeaders = {'Authorization': 'Bearer $token'};
           _desktopAttachmentBytes = attachmentBytes;
@@ -820,10 +1230,11 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
       if (kIsWeb) {
         await Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => _WebAttachmentViewerPage(
+            builder: (_) => WorkOrderWebAttachmentViewerPage(
               fileName: title,
               fileBytes: attachmentBytes,
               contentType: contentType,
+              description: description,
             ),
           ),
         );
@@ -832,12 +1243,13 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
 
       await Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => _AttachmentViewerPage(
+          builder: (_) => WorkOrderAttachmentViewerPage(
             pdfBytes: attachmentBytes,
             networkUrl: uri.toString(),
             networkHeaders: {'Authorization': 'Bearer $token'},
             fileName: title,
             contentType: contentType,
+            description: description,
           ),
         ),
       );
@@ -1062,64 +1474,243 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
   }
 
   Widget _buildAttachmentsSection() {
-    final attachmentButtons = <Widget>[
+    final reportPdfUrl = _resolvedReportPdfUrl();
+    final reportPdfName = _resolvedReportPdfName();
+    final systemAttachments = <({String url, String title})>[
       if (_workOrder.sourceFileUrl.isNotEmpty)
-        ElevatedButton(
-          onPressed: _isOpeningAttachment
-              ? null
-              : () => _openAttachment(
-                  _workOrder.sourceFileUrl,
-                  _workOrder.sourceFileName.isEmpty
-                      ? 'Source PDF'
-                      : _workOrder.sourceFileName,
-                  contentType: 'application/pdf',
-                ),
-          child: const Text('Source PDF'),
-        ),
+        (url: _workOrder.sourceFileUrl, title: 'Work Order PDF'),
+      if (reportPdfUrl.isNotEmpty) (url: reportPdfUrl, title: reportPdfName),
       if (_workOrder.mergedPdfUrl.isNotEmpty)
-        ElevatedButton(
-          onPressed: _isOpeningAttachment
-              ? null
-              : () => _openAttachment(
-                  _workOrder.mergedPdfUrl,
-                  '${_workOrder.referenceNumber} merged.pdf',
-                  contentType: 'application/pdf',
-                ),
-          child: const Text('Merged PDF'),
-        ),
-      ..._attachments
-          .where((attachment) => attachment.fileUrl.trim().isNotEmpty)
-          .map(
-            (attachment) => ElevatedButton(
-              onPressed: _isOpeningAttachment
-                  ? null
-                  : () => _openAttachment(
-                      attachment.fileUrl,
-                      attachment.displayLabel,
-                      contentType: attachment.contentType,
-                    ),
-              child: Text(attachment.displayLabel),
-            ),
-          ),
+        (url: _workOrder.mergedPdfUrl, title: 'Merged PDF'),
     ];
+    final userAttachments = _attachments
+        .where((attachment) => attachment.fileUrl.trim().isNotEmpty)
+        .toList();
 
-    return _buildSection(
-      title: 'Attachments',
-      children: [
-        if (_isLoadingAttachments)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
-            child: CircularProgressIndicator(),
-          )
-        else if (attachmentButtons.isEmpty)
-          const Text(
-            'No attachments are available for this work order yet.',
-            style: TextStyle(color: Color(0xFF64748B)),
-          )
-        else
-          Wrap(spacing: 8, runSpacing: 8, children: attachmentButtons),
-      ],
+    Widget buildAttachmentTile({
+      required String title,
+      required String contentType,
+      String subtitle = '',
+      required VoidCallback? onTap,
+      VoidCallback? onDelete,
+    }) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          color: const Color(0xFFF8FAFC),
+        ),
+        child: ListTile(
+          dense: true,
+          visualDensity: const VisualDensity(vertical: -2),
+          minVerticalPadding: 2,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 2,
+          ),
+          leading: Icon(
+            contentType.toLowerCase().startsWith('image/')
+                ? Icons.image_outlined
+                : Icons.picture_as_pdf_outlined,
+            size: 18,
+          ),
+          title: Text(title, style: const TextStyle(fontSize: 13.5)),
+          subtitle: subtitle.trim().isEmpty
+              ? null
+              : Text(subtitle, style: const TextStyle(fontSize: 12)),
+          onTap: onTap,
+          trailing: onDelete == null
+              ? null
+              : IconButton(
+                  onPressed: onDelete,
+                  tooltip: 'Delete',
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  padding: const EdgeInsets.all(6),
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                ),
+        ),
+      );
+    }
+
+    return Card(
+      color: Colors.white,
+      elevation: 0.5,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Attachments',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                ),
+                if (_canAddAttachment)
+                  IconButton(
+                    onPressed: _isMutatingAttachment ? null : _addAttachment,
+                    tooltip: _isMutatingAttachment
+                        ? 'Processing...'
+                        : 'Add Attachment',
+                    icon: _isMutatingAttachment
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.add),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            if (_isLoadingAttachments)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: CircularProgressIndicator(),
+              )
+            else if (_attachmentAccessMessage.isNotEmpty)
+              Text(
+                _attachmentAccessMessage,
+                style: const TextStyle(color: Color(0xFF64748B)),
+              )
+            else if (systemAttachments.isEmpty && userAttachments.isEmpty)
+              const Text(
+                'No attachments are available for this work order yet.',
+                style: TextStyle(color: Color(0xFF64748B)),
+              )
+            else ...[
+              if (systemAttachments.isNotEmpty)
+                Column(
+                  children: systemAttachments
+                      .map(
+                        (item) => buildAttachmentTile(
+                          title: item.title,
+                          contentType: 'application/pdf',
+                          onTap: _isOpeningAttachment || _isMutatingAttachment
+                              ? null
+                              : () => _openAttachment(
+                                  item.url,
+                                  item.title,
+                                  contentType: 'application/pdf',
+                                ),
+                        ),
+                      )
+                      .toList(),
+                ),
+              if (systemAttachments.isNotEmpty && userAttachments.isNotEmpty)
+                const SizedBox(height: 12),
+              if (userAttachments.isNotEmpty)
+                Column(
+                  children: userAttachments.map((attachment) {
+                    final fallbackLabel = _attachmentDisplayLabel(
+                      attachment,
+                      attachments: userAttachments,
+                    );
+                    final title = attachment.description.trim().isNotEmpty
+                        ? attachment.description.trim()
+                        : fallbackLabel;
+                    final subtitleParts = <String>[
+                      if (attachment.createdAt.trim().isNotEmpty)
+                        _formatDateTime(attachment.createdAt),
+                    ];
+                    return buildAttachmentTile(
+                      title: title,
+                      contentType: attachment.contentType,
+                      subtitle: subtitleParts.join(' • '),
+                      onTap: _isOpeningAttachment || _isMutatingAttachment
+                          ? null
+                          : () => _openAttachment(
+                              attachment.fileUrl,
+                              title,
+                              contentType: attachment.contentType,
+                              description: attachment.description,
+                            ),
+                      onDelete: _canDeleteAttachment && !_isMutatingAttachment
+                          ? () => _deleteAttachment(attachment)
+                          : null,
+                    );
+                  }).toList(),
+                ),
+            ],
+          ],
+        ),
+      ),
     );
+  }
+
+  String _resolvedReportPdfUrl() {
+    final formPdfUrl = _workOrderForm.pdfUrl.trim();
+    if (formPdfUrl.isNotEmpty) return formPdfUrl;
+
+    final candidates = <String>[
+      '${_workOrder.raw['report_pdf_url'] ?? ''}'.trim(),
+      '${_workOrder.raw['form_pdf_url'] ?? ''}'.trim(),
+      '${_workOrder.raw['pdf_url'] ?? ''}'.trim(),
+    ];
+    for (final value in candidates) {
+      if (value.isNotEmpty) return value;
+    }
+    return '';
+  }
+
+  String _resolvedReportPdfName() {
+    return 'Report PDF';
+  }
+
+  String _attachmentDisplayLabel(
+    WorkOrderAttachment target, {
+    List<WorkOrderAttachment>? attachments,
+  }) {
+    final items =
+        attachments ??
+        _attachments
+            .where((attachment) => attachment.fileUrl.trim().isNotEmpty)
+            .toList();
+    var photoCount = 0;
+    var pdfCount = 0;
+    var otherCount = 0;
+
+    for (final attachment in items) {
+      final contentType = attachment.contentType.trim().toLowerCase();
+      final fileName = attachment.fileName.trim().toLowerCase();
+
+      late final String label;
+      if (contentType.startsWith('image/') ||
+          fileName.endsWith('.png') ||
+          fileName.endsWith('.jpg') ||
+          fileName.endsWith('.jpeg') ||
+          fileName.endsWith('.gif') ||
+          fileName.endsWith('.webp') ||
+          fileName.endsWith('.heic') ||
+          fileName.endsWith('.heif')) {
+        photoCount += 1;
+        label = 'Photo $photoCount';
+      } else if (contentType == 'application/pdf' ||
+          fileName.endsWith('.pdf')) {
+        pdfCount += 1;
+        label = 'PDF $pdfCount';
+      } else {
+        otherCount += 1;
+        label = 'Attachment $otherCount';
+      }
+
+      if (attachment.id == target.id) {
+        return label;
+      }
+    }
+
+    return 'Attachment';
   }
 
   IconData _iconForHistoryAction(String action) {
@@ -1155,6 +1746,10 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
         return Icons.description_outlined;
       case 'approved':
         return Icons.verified_outlined;
+      case 'attachment_added':
+      case 'attachment_uploaded':
+      case 'attachment_deleted':
+        return Icons.attach_file_outlined;
       case 'merged_pdf_regenerated':
       case 'source_file_uploaded':
       case 'source_file_deleted':
@@ -1178,6 +1773,11 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
         return 'Transfer accepted';
       case 'transfer_rejected':
         return 'Transfer rejected';
+      case 'attachment_added':
+      case 'attachment_uploaded':
+        return 'Attachment added';
+      case 'attachment_deleted':
+        return 'Attachment deleted';
     }
     final words = action
         .split('_')
@@ -1441,12 +2041,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
                         TextButton(
                           onPressed: () {
                             setState(() {
-                              _showDesktopAttachment = false;
-                              _desktopAttachmentUrl = '';
-                              _desktopAttachmentTitle = '';
-                              _desktopAttachmentContentType = '';
-                              _desktopAttachmentHeaders = const {};
-                              _desktopAttachmentBytes = null;
+                              _closeDesktopAttachmentViewer();
                             });
                           },
                           child: const Text('Close'),
@@ -1455,6 +2050,23 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
                     ),
                   ),
                   const Divider(height: 1),
+                  if (_desktopAttachmentDescription.trim().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Text(
+                          _desktopAttachmentDescription.trim(),
+                          style: const TextStyle(color: Color(0xFF334155)),
+                        ),
+                      ),
+                    ),
                   Expanded(
                     child: Padding(
                       padding: const EdgeInsets.all(12),
@@ -1465,15 +2077,17 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
                                       'Unable to load attachment preview.',
                                     ),
                                   )
-                                : _InlineAttachmentPreview(
+                                : WorkOrderInlineAttachmentPreview(
                                     bytes: _desktopAttachmentBytes!,
                                     contentType: _desktopAttachmentContentType,
+                                    suspendOnOverlay: _suspendWebPdfPreview,
                                   ))
-                          : _EmbeddedAttachmentViewer(
+                          : WorkOrderPdfViewer(
                               networkUrl: _desktopAttachmentUrl,
                               memoryBytes: _desktopAttachmentBytes,
                               contentType: _desktopAttachmentContentType,
                               networkHeaders: _desktopAttachmentHeaders,
+                              suspendOnOverlay: _suspendWebPdfPreview,
                             ),
                     ),
                   ),
@@ -1530,6 +2144,36 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
               ),
             ],
           ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 24,
+            runSpacing: 16,
+            children: [
+              SizedBox(width: 220, child: _buildLocationField()),
+              SizedBox(
+                width: 260,
+                child: _buildField(
+                  'Device',
+                  [
+                    if (_workOrder.deviceBrand.trim().isNotEmpty)
+                      _workOrder.deviceBrand.trim(),
+                    if (_workOrder.deviceModel.trim().isNotEmpty)
+                      _workOrder.deviceModel.trim(),
+                  ].join(' - '),
+                ),
+              ),
+              SizedBox(
+                width: 160,
+                child: _buildField('Asset Number', _workOrder.assetNumber),
+              ),
+              SizedBox(
+                width: 160,
+                child: _buildField('Serial Number', _workOrder.serialNumber),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _buildField('Issue', _issueDisplay()),
           if (_workOrder.isTransferring) ...[
             const SizedBox(height: 14),
             const Align(
@@ -1599,63 +2243,16 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
       ),
       _buildAttachmentsSection(),
       _buildSection(
-        title: 'Location & Contact',
+        title: 'Other Information',
         children: [
           Wrap(
             spacing: 24,
             runSpacing: 16,
             children: [
-              SizedBox(width: 160, child: _buildLocationField()),
               SizedBox(
                 width: 220,
                 child: _buildField('Contact', _contactDisplay()),
               ),
-            ],
-          ),
-        ],
-      ),
-      _buildSection(
-        title: 'Device',
-        children: [
-          Wrap(
-            spacing: 24,
-            runSpacing: 16,
-            children: [
-              SizedBox(
-                width: 160,
-                child: _buildField(
-                  'Device',
-                  [
-                    if (_workOrder.deviceBrand.trim().isNotEmpty)
-                      _workOrder.deviceBrand.trim(),
-                    if (_workOrder.deviceModel.trim().isNotEmpty)
-                      _workOrder.deviceModel.trim(),
-                  ].join(' - '),
-                ),
-              ),
-              SizedBox(
-                width: 160,
-                child: _buildField('Asset Number', _workOrder.assetNumber),
-              ),
-              SizedBox(
-                width: 160,
-                child: _buildField('Serial Number', _workOrder.serialNumber),
-              ),
-            ],
-          ),
-        ],
-      ),
-      _buildSection(
-        title: 'Issue',
-        children: [_buildField('', _issueDisplay())],
-      ),
-      _buildSection(
-        title: 'Dates',
-        children: [
-          Wrap(
-            spacing: 24,
-            runSpacing: 16,
-            children: [
               if (_workOrder.woType.toUpperCase() == 'CM')
                 SizedBox(
                   width: 160,
@@ -1730,17 +2327,9 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
                         );
                       }
 
-                      final leftColumn = <Widget>[
-                        sections[0],
-                        sections[1],
-                        sections[2],
-                        sections[3],
-                      ];
-                      final rightColumn = <Widget>[
-                        sections[4],
-                        sections[5],
-                        sections[6],
-                      ];
+                      final splitIndex = (sections.length / 2).ceil();
+                      final leftColumn = sections.take(splitIndex).toList();
+                      final rightColumn = sections.skip(splitIndex).toList();
 
                       return SingleChildScrollView(
                         physics: const AlwaysScrollableScrollPhysics(),
@@ -1814,362 +2403,84 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
   }
 }
 
-class _EmbeddedAttachmentViewer extends StatefulWidget {
-  const _EmbeddedAttachmentViewer({
-    required this.networkUrl,
-    required this.contentType,
-    this.memoryBytes,
-    required this.networkHeaders,
-  });
+class _AttachmentMetadataDialog extends StatefulWidget {
+  const _AttachmentMetadataDialog({required this.requireReason});
 
-  final String networkUrl;
-  final String contentType;
-  final Uint8List? memoryBytes;
-  final Map<String, String> networkHeaders;
+  final bool requireReason;
 
   @override
-  State<_EmbeddedAttachmentViewer> createState() =>
-      _EmbeddedAttachmentViewerState();
+  State<_AttachmentMetadataDialog> createState() =>
+      _AttachmentMetadataDialogState();
 }
 
-class _EmbeddedAttachmentViewerState extends State<_EmbeddedAttachmentViewer> {
-  String? _errorMessage;
+class _AttachmentMetadataDialogState extends State<_AttachmentMetadataDialog> {
+  final _reasonController = TextEditingController();
+  final _descriptionController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
 
   @override
-  Widget build(BuildContext context) {
-    final isImage = widget.contentType.toLowerCase().startsWith('image/');
-    final hasMemorySource =
-        widget.memoryBytes != null && widget.memoryBytes!.isNotEmpty;
-    return SfTheme(
-      data: SfThemeData(
-        pdfViewerThemeData: SfPdfViewerThemeData(backgroundColor: Colors.white),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          color: Colors.white,
-          child: _errorMessage == null
-              ? isImage
-                    ? Center(
-                        child: InteractiveViewer(
-                          child: hasMemorySource
-                              ? Image.memory(widget.memoryBytes!)
-                              : Image.network(
-                                  widget.networkUrl,
-                                  headers: widget.networkHeaders,
-                                  errorBuilder: (_, __, ___) {
-                                    WidgetsBinding.instance
-                                        .addPostFrameCallback((_) {
-                                          if (!mounted) return;
-                                          setState(() {
-                                            _errorMessage =
-                                                'Unable to load attachment.';
-                                          });
-                                        });
-                                    return const SizedBox.shrink();
-                                  },
-                                ),
-                        ),
-                      )
-                    : (hasMemorySource
-                          ? SfPdfViewer.memory(
-                              widget.memoryBytes!,
-                              onDocumentLoadFailed: (details) {
-                                setState(() {
-                                  final rawMessage =
-                                      '${details.error} ${details.description}'
-                                          .trim();
-                                  _errorMessage = rawMessage.isEmpty
-                                      ? 'Unable to load attachment.'
-                                      : rawMessage;
-                                });
-                              },
-                            )
-                          : SfPdfViewer.network(
-                              widget.networkUrl,
-                              headers: widget.networkHeaders,
-                              onDocumentLoadFailed: (details) {
-                                setState(() {
-                                  final rawMessage =
-                                      '${details.error} ${details.description}'
-                                          .trim();
-                                  _errorMessage = rawMessage.isEmpty
-                                      ? 'Unable to load attachment.'
-                                      : rawMessage;
-                                });
-                              },
-                            ))
-              : Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: SelectableText(
-                      _errorMessage!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.red),
-                    ),
-                  ),
-                ),
-        ),
-      ),
-    );
+  void dispose() {
+    _reasonController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
   }
-}
 
-class _WebAttachmentViewerPage extends StatelessWidget {
-  const _WebAttachmentViewerPage({
-    required this.fileName,
-    required this.fileBytes,
-    required this.contentType,
-  });
-
-  final String fileName;
-  final Uint8List fileBytes;
-  final String contentType;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(fileName.isEmpty ? 'View Attachment' : fileName),
-      ),
-      backgroundColor: Colors.white,
-      body: Padding(
-        padding: const EdgeInsets.all(12),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            color: Colors.white,
-            child: _InlineAttachmentPreview(
-              bytes: fileBytes,
-              contentType: contentType,
-            ),
-          ),
-        ),
-      ),
-    );
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+    Navigator.of(context).pop((
+      reason: _reasonController.text.trim(),
+      description: _descriptionController.text.trim(),
+    ));
   }
-}
-
-class _AttachmentViewerPage extends StatefulWidget {
-  const _AttachmentViewerPage({
-    this.pdfBytes,
-    this.networkUrl,
-    this.networkHeaders,
-    required this.fileName,
-    required this.contentType,
-  });
-
-  final Uint8List? pdfBytes;
-  final String? networkUrl;
-  final Map<String, String>? networkHeaders;
-  final String fileName;
-  final String contentType;
-  bool get hasNetworkSource => networkUrl != null && networkUrl!.isNotEmpty;
-  bool get hasMemorySource => pdfBytes != null && pdfBytes!.isNotEmpty;
-
-  @override
-  State<_AttachmentViewerPage> createState() => _AttachmentViewerPageState();
-}
-
-class _AttachmentViewerPageState extends State<_AttachmentViewerPage> {
-  String? _errorMessage;
-  bool _openingFallback = false;
 
   @override
   Widget build(BuildContext context) {
-    Widget viewer = const SizedBox.shrink();
-    final isImage = widget.contentType.toLowerCase().startsWith('image/');
-    if (_errorMessage == null) {
-      if (isImage && widget.hasMemorySource) {
-        viewer = Center(
-          child: InteractiveViewer(child: Image.memory(widget.pdfBytes!)),
-        );
-      } else if (widget.hasMemorySource && !isImage) {
-        viewer = SfPdfViewer.memory(
-          widget.pdfBytes!,
-          onDocumentLoadFailed: (details) {
-            setState(() {
-              final rawMessage = '${details.error} ${details.description}'
-                  .trim();
-              _errorMessage = rawMessage.isEmpty
-                  ? 'Unable to load attachment.'
-                  : rawMessage;
-            });
-          },
-        );
-      } else if (widget.hasNetworkSource && !kIsWeb && !isImage) {
-        viewer = SfPdfViewer.network(
-          widget.networkUrl!,
-          headers: widget.networkHeaders,
-          onDocumentLoadFailed: (details) {
-            setState(() {
-              final rawMessage = '${details.error} ${details.description}'
-                  .trim();
-              _errorMessage = rawMessage.isEmpty
-                  ? 'Unable to load attachment.'
-                  : rawMessage;
-            });
-          },
-        );
-      } else {
-        viewer = const Center(
-          child: Text('No attachment source is available.'),
-        );
-      }
-    } else {
-      viewer = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
+    return AlertDialog(
+      title: const Text('Attachment Details'),
+      scrollable: true,
+      content: SizedBox(
+        width: 420,
+        child: Form(
+          key: _formKey,
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              SelectableText(
-                _errorMessage!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.red),
+              TextFormField(
+                controller: _descriptionController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Description (Optional)',
+                  border: OutlineInputBorder(),
+                ),
               ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: _openingFallback ? null : _openWithSystemViewer,
-                icon: _openingFallback
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.launch),
-                label: const Text('Open file in system viewer'),
-              ),
+              if (widget.requireReason) ...[
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _reasonController,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    labelText: 'Reason',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Reason is required';
+                    }
+                    return null;
+                  },
+                ),
+              ],
             ],
           ),
         ),
-      );
-    }
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          widget.fileName.isEmpty ? 'View Attachment' : widget.fileName,
-        ),
       ),
-      backgroundColor: Colors.white,
-      body: SfTheme(
-        data: SfThemeData(
-          pdfViewerThemeData: SfPdfViewerThemeData(
-            backgroundColor: Colors.white,
-          ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
         ),
-        child: Container(color: Colors.white, child: viewer),
-      ),
-      floatingActionButton: _errorMessage == null
-          ? null
-          : FloatingActionButton.extended(
-              onPressed: () {
-                setState(() {
-                  _errorMessage = null;
-                });
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Retry'),
-            ),
+        FilledButton(onPressed: _submit, child: const Text('OK')),
+      ],
     );
-  }
-
-  Future<void> _openWithSystemViewer() async {
-    setState(() {
-      _openingFallback = true;
-    });
-    try {
-      Uint8List? sourceBytes = widget.pdfBytes;
-
-      if (kIsWeb) {
-        if (sourceBytes == null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No file bytes available to open locally.'),
-            ),
-          );
-          return;
-        }
-        final dataUri = Uri.dataFromBytes(
-          sourceBytes,
-          mimeType: widget.contentType.isEmpty
-              ? 'application/octet-stream'
-              : widget.contentType,
-        );
-        final launched = await launchUrl(
-          dataUri,
-          mode: LaunchMode.platformDefault,
-        );
-        if (!launched && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No app found to open file.')),
-          );
-        }
-        return;
-      }
-
-      if (widget.pdfBytes == null && widget.hasNetworkSource) {
-        final uri = Uri.parse(widget.networkUrl!);
-        final response = await http.get(uri, headers: widget.networkHeaders);
-        if (response.statusCode != 200) {
-          throw Exception(
-            'Open attachment failed (${response.statusCode}): ${response.reasonPhrase ?? 'Request error'}',
-          );
-        }
-        sourceBytes = Uint8List.fromList(response.bodyBytes);
-      } else if (widget.pdfBytes != null) {
-        sourceBytes = widget.pdfBytes;
-      }
-
-      if (sourceBytes == null || sourceBytes.isEmpty) {
-        throw Exception('No attachment content available.');
-      }
-
-      final dataUri = Uri.dataFromBytes(
-        sourceBytes,
-        mimeType: widget.contentType.isEmpty
-            ? 'application/octet-stream'
-            : widget.contentType,
-      );
-      final launched = await launchUrl(
-        dataUri,
-        mode: LaunchMode.platformDefault,
-      );
-      if (!launched && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No app found to open file.')),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Unable to open file locally: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _openingFallback = false;
-        });
-      }
-    }
-  }
-}
-
-class _InlineAttachmentPreview extends StatelessWidget {
-  const _InlineAttachmentPreview({
-    required this.bytes,
-    required this.contentType,
-  });
-
-  final Uint8List bytes;
-  final String contentType;
-
-  @override
-  Widget build(BuildContext context) {
-    if (contentType.toLowerCase().startsWith('image/')) {
-      return Center(child: InteractiveViewer(child: Image.memory(bytes)));
-    }
-    return PdfEmbedView(bytes: bytes);
   }
 }

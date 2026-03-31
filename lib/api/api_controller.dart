@@ -138,6 +138,10 @@ class ApiPaths {
       '/api/work-orders/$workOrderId';
   static String workOrderAttachments(String workOrderId) =>
       '/api/work-orders/$workOrderId/attachments';
+  static String workOrderAttachmentById(
+    String workOrderId,
+    String attachmentId,
+  ) => '/api/work-orders/$workOrderId/attachments/$attachmentId';
   static String createTransferRequest(String workOrderId) =>
       '/api/work-orders/$workOrderId/transfer-requests';
   static const String incomingTransferRequests =
@@ -176,6 +180,8 @@ class ApiPaths {
       '/api/work-orders/$workOrderId/form';
   static String submitWorkOrderForm(String workOrderId) =>
       '/api/work-orders/$workOrderId/form/submit';
+  static String updateWorkOrderForm(String workOrderId) =>
+      '/api/work-orders/$workOrderId/form/update';
   static String signWorkOrderForm(String workOrderId) =>
       '/api/work-orders/$workOrderId/form/sign';
   static const String workOrderOcr = '/api/work-orders/ocr';
@@ -203,13 +209,16 @@ class ApiPaths {
   static const String adminEmailLogs = '/api/admin/email-logs';
   static String adminEmailLogById(String logId) =>
       '/api/admin/email-logs/$logId';
-  static const String formTemplateChoiceGroups = '/api/form-template-choice-groups';
+  static const String formTemplateChoiceGroups =
+      '/api/form-template-choice-groups';
   static String formTemplateChoiceGroupById(String groupId) =>
       '/api/form-template-choice-groups/$groupId';
   static String formTemplateChoiceGroupItems(String groupId) =>
       '/api/form-template-choice-groups/$groupId/items';
-  static String formTemplateChoiceGroupItemById(String groupId, String itemId) =>
-      '/api/form-template-choice-groups/$groupId/items/$itemId';
+  static String formTemplateChoiceGroupItemById(
+    String groupId,
+    String itemId,
+  ) => '/api/form-template-choice-groups/$groupId/items/$itemId';
   static const String institutions = '/api/institutions';
   static const String adminPing = '/api/admin/ping';
   static const String runHousekeeping = '/api/ops/housekeeping/run';
@@ -684,7 +693,8 @@ class ApiController {
     return FormTemplateChoiceGroupDetail.fromJson(result);
   }
 
-  static Future<FormTemplateChoiceGroupDetail?> getFormTemplateChoiceGroupByCode(
+  static Future<FormTemplateChoiceGroupDetail?>
+  getFormTemplateChoiceGroupByCode(
     String code, {
     bool includeInactive = false,
   }) async {
@@ -1290,15 +1300,77 @@ class ApiController {
   }
 
   static Future<WorkOrderAttachmentList> getWorkOrderAttachments(
-    String workOrderId,
-  ) async {
+    String workOrderId, {
+    bool showError = true,
+  }) async {
     final result = await _callJsonMap(
       apiNameForLog: 'getWorkOrderAttachments',
       subPath: ApiPaths.workOrderAttachments(workOrderId),
       method: 'get',
       postParameters: const {},
+      showError: showError,
     );
     return WorkOrderAttachmentList.fromJson(result);
+  }
+
+  static Future<String> uploadWorkOrderAttachment(
+    String workOrderId, {
+    required Uint8List fileBytes,
+    required String filename,
+    required String contentType,
+    String reason = '',
+    String description = '',
+  }) async {
+    String output = '';
+
+    try {
+      await ApiAction.callMultipartAPI(
+        'uploadWorkOrderAttachment',
+        ApiPaths.workOrderAttachments(workOrderId),
+        const {},
+        files: [
+          ApiMultipartFile(
+            fieldName: 'file',
+            bytes: fileBytes,
+            filename: filename,
+            contentType: contentType,
+          ),
+        ],
+        fields: {
+          if (reason.trim().isNotEmpty) 'reason': reason.trim(),
+          if (description.trim().isNotEmpty) 'description': description.trim(),
+        },
+        dataHandlingCallback: (data) {
+          final message = _extractApiErrorMessage(data);
+          output = message.isEmpty ? 'Attachment uploaded.' : message;
+        },
+        failAction: () {
+          log('Upload work order attachment API call failed');
+        },
+        successStatusCodes: const [200, 201],
+      );
+    } catch (e) {
+      log('Exception during uploadWorkOrderAttachment API call: $e');
+      output = '$e';
+    }
+
+    return output;
+  }
+
+  static Future<String> deleteWorkOrderAttachment(
+    String workOrderId,
+    String attachmentId, {
+    String reason = '',
+  }) async {
+    return _callMessage(
+      apiNameForLog: 'deleteWorkOrderAttachment',
+      subPath: ApiPaths.workOrderAttachmentById(workOrderId, attachmentId),
+      method: 'delete',
+      postParameters: {
+        if (reason.trim().isNotEmpty) 'reason': reason.trim(),
+      },
+      fallbackMessage: 'Attachment deleted.',
+    );
   }
 
   static Future<TransferRequest> createTransferRequest(
@@ -1702,6 +1774,16 @@ class ApiController {
     return WorkOrderForm.fromJson(result);
   }
 
+  static Future<WorkOrderForm> getWorkOrderForm(String workOrderId) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'getWorkOrderForm',
+      subPath: ApiPaths.workOrderForm(workOrderId),
+      method: 'get',
+      postParameters: const {},
+    );
+    return WorkOrderForm.fromJson(result);
+  }
+
   static Future<WorkOrderForm> saveWorkOrderFormDraft(
     String workOrderId,
     Map<String, dynamic> dataJson,
@@ -1728,31 +1810,57 @@ class ApiController {
     );
   }
 
-  static Future<String> signWorkOrderForm(
+  static Future<String> updateWorkOrderForm(
     String workOrderId, {
-    required String signedName,
-    required String signedPosition,
+    required Map<String, dynamic> dataJson,
+  }) async {
+    return _callMessage(
+      apiNameForLog: 'updateWorkOrderForm',
+      subPath: ApiPaths.updateWorkOrderForm(workOrderId),
+      method: 'post',
+      postParameters: {'data_json': dataJson},
+      fallbackMessage: 'Form updated.',
+    );
+  }
+
+  static Future<WorkOrderFormSignResult> signWorkOrderForm(
+    String workOrderId, {
     required Uint8List signatureBytes,
+    String signedName = '',
+    Map<String, dynamic>? dataJson,
     String filename = 'signature.png',
   }) async {
-    String output = '';
+    WorkOrderFormSignResult output = WorkOrderFormSignResult();
 
     try {
+      final files = <ApiMultipartFile>[
+        ApiMultipartFile(
+          fieldName: 'signature',
+          bytes: signatureBytes,
+          filename: filename,
+          contentType: 'image/png',
+        ),
+      ];
+
+      final fields = <String, String>{};
+      if (signedName.trim().isNotEmpty) {
+        fields['signed_name'] = signedName.trim();
+      }
+      if (dataJson != null) {
+        fields['data_json'] = jsonEncode(dataJson);
+      }
+
       await ApiAction.callMultipartAPI(
         'signWorkOrderForm',
         ApiPaths.signWorkOrderForm(workOrderId),
         {},
-        files: [
-          ApiMultipartFile(
-            fieldName: 'signature',
-            bytes: signatureBytes,
-            filename: filename,
-            contentType: 'image/png',
-          ),
-        ],
-        fields: {'signed_name': signedName, 'signed_position': signedPosition},
+        files: files,
+        fields: fields,
         dataHandlingCallback: (data) {
-          output = '${data['message'] ?? 'Form signed.'}';
+          output = WorkOrderFormSignResult.fromJson(data);
+          if (output.message.trim().isEmpty) {
+            output.message = 'Form signed.';
+          }
         },
         failAction: () {
           log('Sign work order form API call failed');
@@ -1760,7 +1868,7 @@ class ApiController {
       );
     } catch (e) {
       log('Exception during signWorkOrderForm API call: $e');
-      output = '$e';
+      output.message = '$e';
     }
 
     return output;
@@ -1929,6 +2037,7 @@ class ApiController {
     required String method,
     required Object postParameters,
     bool requireLogin = true,
+    bool showError = true,
     Map<String, dynamic> queryParameters = const {},
     List<int> successStatusCodes = const [200],
   }) async {
@@ -1951,6 +2060,7 @@ class ApiController {
           output = Map<String, dynamic>.from(data);
         },
         requireLogin: requireLogin,
+        showError: showError,
         successStatusCodes: successStatusCodes,
       );
     } catch (e) {

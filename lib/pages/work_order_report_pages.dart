@@ -1,7 +1,4 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:maintapp/api/api_controller.dart';
 import 'package:maintapp/model/form_template.dart';
 import 'package:maintapp/model/form_template_choice_group.dart';
@@ -19,11 +16,14 @@ class WorkOrderReportFormPage extends StatefulWidget {
 }
 
 class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
+  static const String _serverManagedWorkingDateKey = 'working_date';
+  static const double _workOrderInfoFontSize = 14;
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = true;
   bool _isSaving = false;
   FormTemplate? _selectedTemplate;
   WorkOrderForm _workOrderForm = WorkOrderForm();
+  Map<String, dynamic> _baseDataJson = {};
   final Map<String, FormTemplateChoiceGroupDetail> _choiceGroupByCode = {};
   final Map<String, TextEditingController> _controllers = {};
   final Map<String, List<_DynamicTableRow>> _tableRows = {};
@@ -31,6 +31,20 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
   final Map<String, bool> _boolValues = {};
   final Map<String, Set<String>> _checkboxGroupValues = {};
   final Map<String, String> _radioValues = {};
+
+  bool get _isCompletedEditMode =>
+      widget.workOrder.status.trim().toLowerCase() == 'completed';
+
+  List<FormTemplateField> get _editableFields {
+    return _selectedTemplate?.schema.fields
+            .where(
+              (field) =>
+                  field.isFillStage &&
+                  field.key.trim() != _serverManagedWorkingDateKey,
+            )
+            .toList() ??
+        const <FormTemplateField>[];
+  }
 
   @override
   void initState() {
@@ -59,45 +73,62 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
   Future<void> _loadForm() async {
     setState(() => _isLoading = true);
     try {
-      final templates = await ApiController.listFormTemplates(
-        type: widget.workOrder.woType.trim().toUpperCase(),
-      );
-      if (templates.items.isEmpty) {
-        throw Exception('No form template available.');
-      }
-
+      WorkOrderForm form;
       FormTemplate selectedTemplate;
-      if (templates.items.length == 1) {
-        selectedTemplate = templates.items.first;
-      } else {
-        final pickedId = await _pickTemplate(templates.items);
-        if (pickedId == null || pickedId.isEmpty) {
-          if (mounted) {
-            Navigator.of(context).pop(false);
-          }
-          return;
-        }
-        selectedTemplate = templates.items.firstWhere(
-          (item) => item.id == pickedId,
-          orElse: () => templates.items.first,
-        );
-      }
 
-      if (selectedTemplate.schema.fields.isEmpty) {
+      try {
+        form = await ApiController.getWorkOrderForm(widget.workOrder.id);
+        if (form.templateId.trim().isEmpty) {
+          throw Exception('Template is missing from existing form.');
+        }
         selectedTemplate = await ApiController.getFormTemplateById(
+          form.templateId,
+        );
+      } catch (_) {
+        if (_isCompletedEditMode) {
+          throw Exception(
+            'No submitted report form found for this completed work order.',
+          );
+        }
+        final templates = await ApiController.listFormTemplates(
+          type: widget.workOrder.woType.trim().toUpperCase(),
+        );
+        if (templates.items.isEmpty) {
+          throw Exception('No form template available.');
+        }
+
+        if (templates.items.length == 1) {
+          selectedTemplate = templates.items.first;
+        } else {
+          final pickedId = await _pickTemplate(templates.items);
+          if (pickedId == null || pickedId.isEmpty) {
+            if (mounted) {
+              Navigator.of(context).pop(false);
+            }
+            return;
+          }
+          selectedTemplate = templates.items.firstWhere(
+            (item) => item.id == pickedId,
+            orElse: () => templates.items.first,
+          );
+        }
+
+        if (selectedTemplate.schema.fields.isEmpty) {
+          selectedTemplate = await ApiController.getFormTemplateById(
+            selectedTemplate.id,
+          );
+        }
+        form = await ApiController.createWorkOrderForm(
+          widget.workOrder.id,
           selectedTemplate.id,
         );
       }
 
       await _loadChoiceGroupsForTemplate(selectedTemplate.schema);
 
-      final form = await ApiController.createWorkOrderForm(
-        widget.workOrder.id,
-        selectedTemplate.id,
-      );
-
       _selectedTemplate = selectedTemplate;
       _workOrderForm = form;
+      _baseDataJson = Map<String, dynamic>.from(form.dataJson);
       _applyDataJson(selectedTemplate.schema, form.dataJson);
     } catch (e) {
       if (mounted) {
@@ -197,7 +228,10 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
     _checkboxGroupValues.clear();
     _radioValues.clear();
 
-    for (final field in schema.fields) {
+    for (final field in schema.fields.where(
+      (item) =>
+          item.isFillStage && item.key.trim() != _serverManagedWorkingDateKey,
+    )) {
       if (field.type == 'table') {
         final rows = <_DynamicTableRow>[];
         final rawRows = sourceData[field.key];
@@ -244,8 +278,6 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
         final rawValue = '${sourceData[field.key] ?? ''}'.trim();
         if (field.type == 'date' && rawValue.isNotEmpty) {
           controller.text = rawValue.split('T').first;
-        } else if (field.type == 'date' && field.key == 'working_date') {
-          controller.text = DateTime.now().toIso8601String().split('T').first;
         } else {
           controller.text = rawValue;
         }
@@ -255,7 +287,8 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
   }
 
   Map<String, dynamic> _buildDataJson() {
-    final output = <String, dynamic>{};
+    final output = Map<String, dynamic>.from(_baseDataJson);
+    output.remove(_serverManagedWorkingDateKey);
     _controllers.forEach((key, controller) {
       output[key] = controller.text.trim();
     });
@@ -308,6 +341,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
         widget.workOrder.id,
         _buildDataJson(),
       );
+      _baseDataJson = Map<String, dynamic>.from(_workOrderForm.dataJson);
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -327,11 +361,22 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
     setState(() => _isSaving = true);
     try {
       final dataJson = _buildDataJson();
-      await ApiController.saveWorkOrderFormDraft(widget.workOrder.id, dataJson);
-      final message = await ApiController.submitWorkOrderForm(
-        widget.workOrder.id,
-        dataJson: dataJson,
-      );
+      if (!_isCompletedEditMode) {
+        _workOrderForm = await ApiController.saveWorkOrderFormDraft(
+          widget.workOrder.id,
+          dataJson,
+        );
+        _baseDataJson = Map<String, dynamic>.from(_workOrderForm.dataJson);
+      }
+      final message = _isCompletedEditMode
+          ? await ApiController.updateWorkOrderForm(
+              widget.workOrder.id,
+              dataJson: dataJson,
+            )
+          : await ApiController.submitWorkOrderForm(
+              widget.workOrder.id,
+              dataJson: dataJson,
+            );
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -384,27 +429,51 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
         '(${widget.workOrder.contactNumber.trim()})',
     ].join(' ');
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SelectionArea(
-          child: SelectableText(
-            '${widget.workOrder.woNo.trim()} (${widget.workOrder.woType.trim().toUpperCase()})',
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF0F172A),
+    final infoRows = <Widget>[
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 2),
+            child: Icon(
+              Icons.location_on_outlined,
+              size: 18,
+              color: Color(0xFF64748B),
             ),
           ),
-        ),
-        const SizedBox(height: 10),
+          const SizedBox(width: 8),
+          Expanded(
+            child: SelectionArea(
+              child: RichText(
+                text: TextSpan(
+                  style: const TextStyle(
+                    fontSize: _workOrderInfoFontSize,
+                    color: Color(0xFF0F172A),
+                  ),
+                  children: [
+                    TextSpan(
+                      text: locationPrefix,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF1D4ED8),
+                      ),
+                    ),
+                    TextSpan(text: locationRest),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      if (deviceText.isNotEmpty)
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Padding(
               padding: EdgeInsets.only(top: 2),
               child: Icon(
-                Icons.location_on_outlined,
+                Icons.memory_outlined,
                 size: 18,
                 color: Color(0xFF64748B),
               ),
@@ -412,139 +481,109 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
             const SizedBox(width: 8),
             Expanded(
               child: SelectionArea(
-                child: RichText(
-                  text: TextSpan(
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFF0F172A),
-                    ),
-                    children: [
-                      TextSpan(
-                        text: locationPrefix,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF1D4ED8),
-                        ),
-                      ),
-                      TextSpan(text: locationRest),
-                    ],
+                child: SelectableText(
+                  deviceText,
+                  style: const TextStyle(
+                    fontSize: _workOrderInfoFontSize,
+                    color: Color(0xFF0F172A),
                   ),
                 ),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 8),
-        if (deviceText.isNotEmpty)
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 2),
-                child: Icon(
-                  Icons.memory_outlined,
-                  size: 18,
-                  color: Color(0xFF64748B),
-                ),
+      if (widget.workOrder.assetNumber.trim().isNotEmpty ||
+          widget.workOrder.serialNumber.trim().isNotEmpty)
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Icon(
+                Icons.numbers_outlined,
+                size: 18,
+                color: Color(0xFF64748B),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SelectionArea(
-                  child: SelectableText(
-                    deviceText,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFF0F172A),
-                    ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SelectionArea(
+                child: SelectableText(
+                  'Asset No: ${widget.workOrder.assetNumber.trim()}, S/N: ${widget.workOrder.serialNumber.trim()}',
+                  style: const TextStyle(
+                    fontSize: _workOrderInfoFontSize,
+                    color: Color(0xFF334155),
                   ),
                 ),
               ),
-            ],
-          ),
-        if (widget.workOrder.assetNumber.trim().isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 2),
-                child: Icon(
-                  Icons.confirmation_number_outlined,
-                  size: 18,
-                  color: Color(0xFF64748B),
-                ),
+            ),
+          ],
+        ),
+      if (contactText.isNotEmpty)
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Icon(
+                Icons.phone_outlined,
+                size: 18,
+                color: Color(0xFF64748B),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SelectionArea(
-                  child: SelectableText(
-                    'Asset: ${widget.workOrder.assetNumber.trim()}',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF334155),
-                    ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SelectionArea(
+                child: SelectableText(
+                  contactText,
+                  style: const TextStyle(
+                    fontSize: _workOrderInfoFontSize,
+                    color: Color(0xFF334155),
                   ),
                 ),
               ),
-            ],
+            ),
+          ],
+        ),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SelectionArea(
+          child: SelectableText(
+            '${widget.workOrder.woNo.trim()} (${widget.workOrder.woType.trim().toUpperCase()})',
+            style: const TextStyle(
+              fontSize: _workOrderInfoFontSize,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF0F172A),
+            ),
           ),
-        ],
-        if (widget.workOrder.serialNumber.trim().isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 2),
-                child: Icon(
-                  Icons.tag_outlined,
-                  size: 18,
-                  color: Color(0xFF64748B),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SelectionArea(
-                  child: SelectableText(
-                    'S/N: ${widget.workOrder.serialNumber.trim()}',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF334155),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-        if (contactText.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 2),
-                child: Icon(
-                  Icons.phone_outlined,
-                  size: 18,
-                  color: Color(0xFF64748B),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SelectionArea(
-                  child: SelectableText(
-                    contactText,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF334155),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
+        ),
+        const SizedBox(height: 10),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final useTwoColumns = constraints.maxWidth >= 860;
+            if (!useTwoColumns) {
+              return Column(
+                children: [
+                  for (var i = 0; i < infoRows.length; i++) ...[
+                    infoRows[i],
+                    if (i < infoRows.length - 1) const SizedBox(height: 8),
+                  ],
+                ],
+              );
+            }
+            final itemWidth = (constraints.maxWidth - 16) / 2;
+            return Wrap(
+              spacing: 16,
+              runSpacing: 8,
+              children: [
+                for (final item in infoRows) SizedBox(width: itemWidth, child: item),
+              ],
+            );
+          },
+        ),
       ],
     );
   }
@@ -944,7 +983,9 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          _selectedTemplate?.name.isNotEmpty == true
+          _isCompletedEditMode
+              ? 'Edit Report'
+              : _selectedTemplate?.name.isNotEmpty == true
               ? _selectedTemplate!.name
               : _workOrderForm.reportNo.isNotEmpty
               ? _workOrderForm.reportNo
@@ -978,7 +1019,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _buildSectionTitle('Report Form'),
-                          ...?_selectedTemplate?.schema.fields.map(
+                          ..._editableFields.map(
                             (field) => Padding(
                               padding: const EdgeInsets.only(bottom: 16),
                               child: _buildFieldWidget(field),
@@ -994,17 +1035,8 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _isSaving ? null : _saveDraft,
-                  child: const Text('Save Draft'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton(
+          child: _isCompletedEditMode
+              ? FilledButton(
                   onPressed: _isSaving ? null : _submit,
                   child: _isSaving
                       ? const SizedBox(
@@ -1012,187 +1044,33 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Submit'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class WorkOrderSignPage extends StatefulWidget {
-  const WorkOrderSignPage({required this.workOrder, super.key});
-
-  final WorkOrder workOrder;
-
-  @override
-  State<WorkOrderSignPage> createState() => _WorkOrderSignPageState();
-}
-
-class _WorkOrderSignPageState extends State<WorkOrderSignPage> {
-  final _formKey = GlobalKey<FormState>();
-  final _signedNameController = TextEditingController();
-  final _signedPositionController = TextEditingController();
-  final _points = <Offset?>[];
-  final _boundaryKey = GlobalKey();
-  bool _isSubmitting = false;
-
-  @override
-  void dispose() {
-    _signedNameController.dispose();
-    _signedPositionController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
-    if (_points.whereType<Offset>().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please add a signature first.')),
-      );
-      return;
-    }
-    setState(() => _isSubmitting = true);
-    try {
-      final boundary =
-          _boundaryKey.currentContext?.findRenderObject()
-              as RenderRepaintBoundary?;
-      if (boundary == null) {
-        throw Exception('Signature canvas is not ready.');
-      }
-      final image = await boundary.toImage(pixelRatio: 3);
-      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      if (byteData == null) {
-        throw Exception('Unable to generate signature image.');
-      }
-      final bytes = byteData.buffer.asUint8List();
-      final message = await ApiController.signWorkOrderForm(
-        widget.workOrder.id,
-        signedName: _signedNameController.text.trim(),
-        signedPosition: _signedPositionController.text.trim(),
-        signatureBytes: bytes,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-      Navigator.of(context).pop(true);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
-    } finally {
-      if (mounted) {
-        setState(() => _isSubmitting = false);
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Sign Report')),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            TextFormField(
-              controller: _signedNameController,
-              decoration: const InputDecoration(
-                labelText: 'Staff Name',
-                border: OutlineInputBorder(),
-              ),
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) return 'Required';
-                return null;
-              },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _signedPositionController,
-              decoration: const InputDecoration(
-                labelText: 'Staff ID / Position',
-                border: OutlineInputBorder(),
-              ),
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) return 'Required';
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
-            Container(
-              width: double.infinity,
-              height: 240,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFCBD5E1)),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: GestureDetector(
-                  onPanStart: (details) {
-                    final box =
-                        _boundaryKey.currentContext?.findRenderObject()
-                            as RenderBox?;
-                    if (box == null) return;
-                    final local = box.globalToLocal(details.globalPosition);
-                    setState(() => _points.add(local));
-                  },
-                  onPanUpdate: (details) {
-                    final box =
-                        _boundaryKey.currentContext?.findRenderObject()
-                            as RenderBox?;
-                    if (box == null) return;
-                    final local = box.globalToLocal(details.globalPosition);
-                    setState(() => _points.add(local));
-                  },
-                  onPanEnd: (_) {
-                    setState(() => _points.add(null));
-                  },
-                  child: RepaintBoundary(
-                    key: _boundaryKey,
-                    child: CustomPaint(
-                      painter: _SignaturePainter(List<Offset?>.from(_points)),
-                      child: const SizedBox.expand(),
+                      : const Text('Update'),
+                )
+              : Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _isSaving ? null : _saveDraft,
+                        child: const Text('Save Draft'),
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: _isSaving ? null : _submit,
+                        child: _isSaving
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('Ready To Sign'),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ),
-          ],
-        ),
-      ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _isSubmitting
-                      ? null
-                      : () => setState(() => _points.clear()),
-                  child: const Text('Clear'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton(
-                  onPressed: _isSubmitting ? null : _submit,
-                  child: _isSubmitting
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Submit Signature'),
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -1273,32 +1151,5 @@ class _DynamicChoiceSelection {
 
   void dispose() {
     remarkController.dispose();
-  }
-}
-
-class _SignaturePainter extends CustomPainter {
-  _SignaturePainter(this.points);
-
-  final List<Offset?> points;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.black
-      ..strokeWidth = 2.2
-      ..strokeCap = StrokeCap.round;
-
-    for (var i = 0; i < points.length - 1; i++) {
-      final current = points[i];
-      final next = points[i + 1];
-      if (current != null && next != null) {
-        canvas.drawLine(current, next, paint);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _SignaturePainter oldDelegate) {
-    return oldDelegate.points != points;
   }
 }

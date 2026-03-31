@@ -116,6 +116,7 @@ class FormTemplateField {
   String label = '';
   String type = '';
   bool required = false;
+  String captureStage = '';
   String choiceGroupCode = '';
   FormTemplateChoiceGroupRef? choiceGroup;
   List<FormTemplateFieldOption> options = [];
@@ -129,6 +130,7 @@ class FormTemplateField {
     label = DataHelper.getStringSafely(json, 'label', '');
     type = DataHelper.getStringSafely(json, 'type', '');
     required = DataHelper.getBoolSafely(json, 'required', false);
+    captureStage = DataHelper.getStringSafely(json, 'capture_stage', '');
     choiceGroupCode = DataHelper.getStringSafely(json, 'choice_group_code', '');
     if (json['choice_group'] is Map) {
       choiceGroup = FormTemplateChoiceGroupRef.fromJson(
@@ -143,6 +145,10 @@ class FormTemplateField {
           .toList();
     }
   }
+
+  bool get isSignStage => captureStage.trim().toLowerCase() == 'sign';
+
+  bool get isFillStage => !isSignStage;
 }
 
 class FormTemplateChoiceGroupDetail {

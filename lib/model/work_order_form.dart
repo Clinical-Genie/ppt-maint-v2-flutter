@@ -30,3 +30,21 @@ class WorkOrderForm {
     updatedAt = DataHelper.getStringSafely(json, 'updated_at', '');
   }
 }
+
+class WorkOrderFormSignResult {
+  String message = '';
+  String pdfUrl = '';
+  String reportNo = '';
+  String signatureUrl = '';
+  Map<String, dynamic> raw = {};
+
+  WorkOrderFormSignResult();
+
+  WorkOrderFormSignResult.fromJson(Map<dynamic, dynamic> json) {
+    raw = Map<String, dynamic>.from(json);
+    message = DataHelper.getStringSafely(json, 'message', '');
+    pdfUrl = DataHelper.getStringSafely(json, 'pdf_url', '');
+    reportNo = DataHelper.getStringSafely(json, 'report_no', '');
+    signatureUrl = DataHelper.getStringSafely(json, 'signature_url', '');
+  }
+}

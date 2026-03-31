@@ -55,5 +55,7 @@
 		<string>http</string>
 		<string>https</string>
 	</array>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app needs photo library access so you can attach images to work orders.</string>
 </dict>
 </plist>

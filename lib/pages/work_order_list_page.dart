@@ -12,6 +12,7 @@ import 'package:maintapp/pages/transfer_request_list_page.dart';
 import 'package:maintapp/pages/work_order_detail_page.dart';
 import 'package:maintapp/pages/work_order_email_history_page.dart';
 import 'package:maintapp/pages/work_order_report_pages.dart';
+import 'package:maintapp/pages/work_order_report_sign_page.dart';
 import 'package:maintapp/state/app_state.dart';
 import 'package:maintapp/state/login_session_controller.dart';
 
@@ -1333,10 +1334,20 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
           await _loadWorkOrders();
         }
         return;
+      } else if (action == 'edit_report') {
+        final updated = await Navigator.of(rowContext).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => WorkOrderReportFormPage(workOrder: order),
+          ),
+        );
+        if (updated == true) {
+          await _loadWorkOrders();
+        }
+        return;
       } else if (action == 'sign') {
         final updated = await Navigator.of(rowContext).push<bool>(
           MaterialPageRoute(
-            builder: (_) => WorkOrderSignPage(workOrder: order),
+            builder: (_) => WorkOrderReportSignPage(workOrder: order),
           ),
         );
         if (updated == true) {
@@ -1482,7 +1493,15 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
             ),
           );
         } else if (normalizedStatus == 'completed') {
-          items.add(const PopupMenuItem(value: 'sign', child: Text('Sign')));
+          items.add(
+            const PopupMenuItem(value: 'sign', child: Text('Review and Sign')),
+          );
+          items.add(
+            const PopupMenuItem(
+              value: 'edit_report',
+              child: Text('Edit Report'),
+            ),
+          );
         }
       } else if (_isAssignedToOthers(order)) {
         if (normalizedStatus == 'assigned' || normalizedStatus == 'planned') {
@@ -2363,18 +2382,16 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         ),
         items: [
           const DropdownMenuItem(value: '', child: Text('All engineers')),
-          ...dropdownEngineers
-              .map(
-                (engineer) => DropdownMenuItem(
-                  value: engineer.id,
-                  child: Text(
-                    engineer.isActive
-                        ? _displayName(engineer)
-                        : '${_displayName(engineer)} (inactive)',
-                  ),
-                ),
-              )
-              .toList(),
+          ...dropdownEngineers.map(
+            (engineer) => DropdownMenuItem(
+              value: engineer.id,
+              child: Text(
+                engineer.isActive
+                    ? _displayName(engineer)
+                    : '${_displayName(engineer)} (inactive)',
+              ),
+            ),
+          ),
         ],
         onChanged: enabled ? _onEngineerChanged : null,
       ),

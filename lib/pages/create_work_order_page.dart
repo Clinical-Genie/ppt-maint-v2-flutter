@@ -335,6 +335,7 @@ class _CreateWorkOrderPageState extends State<CreateWorkOrderPage> {
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => _SourcePdfViewerPage(
+            pdfBytes: Uint8List.fromList(request.bodyBytes),
             networkUrl: uri.toString(),
             networkHeaders: {'Authorization': 'Bearer $accessToken'},
             fileName: fileName,

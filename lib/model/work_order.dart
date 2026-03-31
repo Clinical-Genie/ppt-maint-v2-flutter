@@ -295,11 +295,7 @@ class WorkOrderOcrResult {
         : true;
     sourceFileId = DataHelper.getStringSafely(json, 'source_file_id', '');
     sourceFileName = DataHelper.getStringSafely(json, 'source_file_name', '');
-    sourceFileUrl = DataHelper.getStringSafely(
-      json,
-      'source_file_url',
-      '',
-    );
+    sourceFileUrl = DataHelper.getStringSafely(json, 'source_file_url', '');
     ocrJobId = DataHelper.getStringSafely(json, 'ocr_job_id', '');
     extractionMode = DataHelper.getStringSafely(
       json,
