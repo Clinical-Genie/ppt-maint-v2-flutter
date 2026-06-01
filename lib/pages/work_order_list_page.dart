@@ -309,7 +309,8 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       ((_usesEngineerPools && _selectedPool == 'others_wos') ||
           (!_usesEngineerPools && _selectedPool == 'picked_wos'));
 
-  bool get _showPlannedDate => _selectedGroup == 'scheduled';
+  bool get _showPlannedDate =>
+      _selectedGroup == 'picked' || _selectedGroup == 'scheduled';
 
   List<String> get _allowedStatusesForCurrentContext {
     if (_isPublicPool) {
@@ -322,7 +323,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     if (_usesEngineerPools) {
       switch (_selectedGroup) {
         case 'picked':
-          return const ['assigned', 'cannot_completed'];
+          return const ['assigned', 'cannot_completed', 'planned', 'rejected'];
         case 'scheduled':
           return const ['planned'];
         case 'working':
@@ -339,6 +340,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
             'working',
             'completed',
             'cannot_completed',
+            'rejected',
             'signed',
             'signed_edited',
             'approved',
@@ -349,7 +351,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
 
     switch (_selectedGroup) {
       case 'picked':
-        return const ['assigned', 'planned', 'cannot_completed'];
+        return const ['assigned', 'planned', 'cannot_completed', 'rejected'];
       case 'working':
         return const ['working', 'completed'];
       case 'need_approve':
@@ -366,6 +368,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
           'working',
           'completed',
           'cannot_completed',
+          'rejected',
           'signed',
           'signed_edited',
           'approved',
@@ -403,22 +406,18 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
 
   List<(String, String)> get _groupOptions {
     if (_isPublicPool || _isCancelledPool) return const [];
-    if (_usesEngineerPools) {
-      if (_isMyWOsPool) {}
+    if (_usesEngineerPools && _isMyWOsPool) {
       return const [
-        ('picked', 'Picked'),
-        ('scheduled', 'Scheduled'),
-        ('working', 'Working'),
+        ('picked', 'Picked / Scheduled'),
         ('need_sign', 'Need sign'),
         ('ended', 'Ended'),
         ('all', 'All'),
       ];
     }
-    if (_isOthersWOsPool) {
+    if (_usesEngineerPools && _isOthersWOsPool) {
       return const [
         ('all', 'All'),
-        ('picked', 'Picked'),
-        ('scheduled', 'Scheduled'),
+        ('picked', 'Picked / Scheduled'),
         ('working', 'Working'),
         ('need_sign', 'Need sign'),
         ('ended', 'Ended'),
@@ -523,7 +522,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     setState(() {
       _selectedGroup = value;
       _selectedStatuses = [];
-      if (value != 'scheduled') {
+      if (!_showPlannedDate) {
         _plannedDateFilter = null;
       }
       _currentPage = 1;
@@ -1207,18 +1206,20 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     WorkOrder order,
     BuildContext rowContext,
   ) async {
+    final navigator = Navigator.of(rowContext);
+    final scaffoldMessenger = ScaffoldMessenger.of(rowContext);
     try {
       String feedback;
       final user = LoginSessionController.instance.userInfo;
       if (action == 'view_details') {
-        await Navigator.of(rowContext).push(
+        await navigator.push(
           MaterialPageRoute(
             builder: (_) => WorkOrderDetailPage(workOrderId: order.id),
           ),
         );
         return;
       } else if (action == 'open_incoming_transfers') {
-        await Navigator.of(rowContext).push(
+        await navigator.push(
           MaterialPageRoute(
             builder: (_) => const TransferRequestListPage(
               initialMode: TransferRequestPageMode.incoming,
@@ -1227,7 +1228,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         );
         return;
       } else if (action == 'email_history') {
-        await Navigator.of(rowContext).push(
+        await navigator.push(
           MaterialPageRoute(
             builder: (_) => WorkOrderEmailHistoryPage(workOrder: order),
           ),
@@ -1237,19 +1238,30 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         await _createEmailDraftForWorkOrder(order, rowContext);
         return;
       } else if (action == 'view_report') {
-        ScaffoldMessenger.of(rowContext).showSnackBar(
-          const SnackBar(content: Text('View Report page is not wired yet.')),
+        await navigator.push(
+          MaterialPageRoute(
+            builder: (_) => WorkOrderDetailPage(workOrderId: order.id),
+          ),
         );
         return;
+      } else if (action == 'add_remarks') {
+        await navigator.push<bool>(
+          MaterialPageRoute(
+            builder: (_) => WorkOrderReportFormPage(workOrder: order),
+          ),
+        );
+        if (!mounted) return;
+        await _loadWorkOrders();
+        return;
       } else if (action == 'send_email') {
-        ScaffoldMessenger.of(rowContext).showSnackBar(
+        scaffoldMessenger.showSnackBar(
           const SnackBar(
             content: Text('Multiple-select Send Email is not wired yet.'),
           ),
         );
         return;
       } else if (action == 'edit') {
-        ScaffoldMessenger.of(rowContext).showSnackBar(
+        scaffoldMessenger.showSnackBar(
           const SnackBar(content: Text('Edit action is not available yet.')),
         );
         return;
@@ -1318,14 +1330,23 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
           order.id,
           reason,
         );
+      } else if (action == 'approve') {
+        feedback = await ApiController.approveWorkOrder(order.id);
+      } else if (action == 'reject') {
+        final reason = await _promptReason('Reject work order');
+        if (reason == null || reason.isEmpty) return;
+        feedback = await ApiController.rejectWorkOrder(
+          order.id,
+          reason: reason,
+        );
       } else if (action == 'fill_report') {
         if (order.woType.trim().toUpperCase() != 'CM') {
-          ScaffoldMessenger.of(rowContext).showSnackBar(
+          scaffoldMessenger.showSnackBar(
             const SnackBar(content: Text('Only CM report is wired now.')),
           );
           return;
         }
-        final updated = await Navigator.of(rowContext).push<bool>(
+        final updated = await navigator.push<bool>(
           MaterialPageRoute(
             builder: (_) => WorkOrderReportFormPage(workOrder: order),
           ),
@@ -1335,7 +1356,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         }
         return;
       } else if (action == 'edit_report') {
-        final updated = await Navigator.of(rowContext).push<bool>(
+        final updated = await navigator.push<bool>(
           MaterialPageRoute(
             builder: (_) => WorkOrderReportFormPage(workOrder: order),
           ),
@@ -1345,7 +1366,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         }
         return;
       } else if (action == 'sign') {
-        final updated = await Navigator.of(rowContext).push<bool>(
+        final updated = await navigator.push<bool>(
           MaterialPageRoute(
             builder: (_) => WorkOrderReportSignPage(workOrder: order),
           ),
@@ -1356,19 +1377,27 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         return;
       } else if (action == 'start') {
         feedback = await ApiController.startWorkOrder(order.id);
+        if (!mounted) return;
+        scaffoldMessenger.showSnackBar(SnackBar(content: Text(feedback)));
+        await navigator.push(
+          MaterialPageRoute(
+            builder: (_) => WorkOrderDetailPage(workOrderId: order.id),
+          ),
+        );
+        if (!mounted) return;
+        await _loadWorkOrders();
+        return;
       } else {
         return;
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        rowContext,
-      ).showSnackBar(SnackBar(content: Text(feedback)));
+      scaffoldMessenger.showSnackBar(SnackBar(content: Text(feedback)));
       await _loadWorkOrders();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        rowContext,
-      ).showSnackBar(SnackBar(content: Text('Action failed: $e')));
+      scaffoldMessenger.showSnackBar(
+        SnackBar(content: Text('Action failed: $e')),
+      );
     }
   }
 
@@ -1405,7 +1434,8 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         );
       } else if (normalizedStatus == 'assigned' ||
           normalizedStatus == 'planned' ||
-          normalizedStatus == 'cannot_completed') {
+          normalizedStatus == 'cannot_completed' ||
+          normalizedStatus == 'rejected') {
         items.add(
           const PopupMenuItem(
             value: 'assign_to_engineer',
@@ -1423,6 +1453,14 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         items.add(
           const PopupMenuItem(value: 'view_report', child: Text('View Report')),
         );
+        items.add(
+          const PopupMenuItem(value: 'edit_report', child: Text('Edit Report')),
+        );
+        items.add(
+          const PopupMenuItem(value: 'add_remarks', child: Text('Add remarks')),
+        );
+        items.add(const PopupMenuItem(value: 'approve', child: Text('Accept')));
+        items.add(const PopupMenuItem(value: 'reject', child: Text('Reject')));
       } else if (normalizedStatus == 'approved') {
         items.add(
           const PopupMenuItem(value: 'send_email', child: Text('Send email')),
@@ -1437,7 +1475,8 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         items.add(const PopupMenuItem(value: 'take', child: Text('Take it')));
       } else if (_isMine(order)) {
         if (normalizedStatus == 'assigned' ||
-            normalizedStatus == 'cannot_completed') {
+            normalizedStatus == 'cannot_completed' ||
+            normalizedStatus == 'rejected') {
           items.add(
             const PopupMenuItem(value: 'plan', child: Text('Schedule')),
           );
@@ -1676,6 +1715,10 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       backgroundColor = const Color(0xFFFFF7ED);
       borderColor = const Color(0xFFFED7AA);
       textColor = const Color(0xFF9A3412);
+    } else if (normalized == 'rejected') {
+      backgroundColor = const Color(0xFFFFF1F2);
+      borderColor = const Color(0xFFFECDD3);
+      textColor = const Color(0xFFBE123C);
     } else if (normalized == 'picked' ||
         normalized == 'in_progress' ||
         normalized == 'planned') {
@@ -1711,6 +1754,8 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       textColor = const Color(0xFF991B1B);
     } else if (normalized == 'unassigned' || order.ownerUserId.isEmpty) {
       textColor = const Color(0xFF9A3412);
+    } else if (normalized == 'rejected') {
+      textColor = const Color(0xFFBE123C);
     } else if (normalized == 'picked' ||
         normalized == 'in_progress' ||
         normalized == 'planned') {

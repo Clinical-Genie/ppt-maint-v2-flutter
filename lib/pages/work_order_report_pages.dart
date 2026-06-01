@@ -5,6 +5,89 @@ import 'package:maintapp/model/form_template_choice_group.dart';
 import 'package:maintapp/model/work_order.dart';
 import 'package:maintapp/model/work_order_form.dart';
 import 'package:maintapp/state/login_session_controller.dart';
+import 'package:maintapp/widgets/work_order_pdf_viewer.dart';
+
+class WorkOrderReportPdfPage extends StatefulWidget {
+  const WorkOrderReportPdfPage({required this.workOrder, super.key});
+
+  final WorkOrder workOrder;
+
+  @override
+  State<WorkOrderReportPdfPage> createState() => _WorkOrderReportPdfPageState();
+}
+
+class _WorkOrderReportPdfPageState extends State<WorkOrderReportPdfPage> {
+  bool _isLoading = true;
+  String _pdfUrl = '';
+  String _error = '';
+  Map<String, String> _headers = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPdf();
+  }
+
+  Future<void> _loadPdf() async {
+    setState(() {
+      _isLoading = true;
+      _error = '';
+    });
+
+    try {
+      final form = await ApiController.getWorkOrderForm(widget.workOrder.id);
+      final rawPdfUrl = form.pdfUrl.trim();
+      if (rawPdfUrl.isEmpty) {
+        throw Exception('Report PDF is not ready yet.');
+      }
+
+      await LoginSessionController.instance.refreshTokenIfNeeded();
+      final token = LoginSessionController.instance.loginInfo.accessToken
+          .trim();
+      if (!mounted) return;
+      setState(() {
+        _pdfUrl = ApiController.resolveServerUrl(rawPdfUrl);
+        _headers = token.isEmpty
+            ? const {}
+            : {'Authorization': 'Bearer $token'};
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = '$e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.workOrder.woNo.trim().isEmpty
+        ? 'Report PDF'
+        : 'Report PDF ${widget.workOrder.woNo.trim()}';
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _error.isNotEmpty
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(_error, textAlign: TextAlign.center),
+              ),
+            )
+          : Padding(
+              padding: const EdgeInsets.all(12),
+              child: WorkOrderPdfViewer(
+                networkUrl: _pdfUrl,
+                contentType: 'application/pdf',
+                networkHeaders: _headers,
+              ),
+            ),
+    );
+  }
+}
 
 class WorkOrderReportFormPage extends StatefulWidget {
   const WorkOrderReportFormPage({required this.workOrder, super.key});
@@ -22,7 +105,6 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = true;
   bool _isSaving = false;
-  bool _isRegeneratingPdf = false;
   FormTemplate? _selectedTemplate;
   WorkOrderForm _workOrderForm = WorkOrderForm();
   Map<String, dynamic> _baseDataJson = {};
@@ -42,25 +124,23 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
     final roles = LoginSessionController.instance.userInfo.roles
         .map((item) => item.toUpperCase())
         .toSet();
-    final isManager = roles.contains('MANAGER') || roles.contains('ADMIN');
+    final isManager = roles.contains('MANAGER');
     final status = widget.workOrder.status.trim().toLowerCase();
-    return isManager &&
-        (status == 'signed' || status == 'signed_edited' || status == 'approved');
+    return isManager && (status == 'signed' || status == 'signed_edited');
   }
 
   List<FormTemplateField> get _editableFields {
-    final fields = _selectedTemplate?.schema.fields
-            .where((field) {
-              if (field.type.trim().toLowerCase() == 'signature') {
-                return false;
-              }
-              if (_isManagerSignedReportMode) {
-                return true;
-              }
-              return field.isFillStage &&
-                  field.key.trim() != _serverManagedWorkingDateKey;
-            })
-            .toList() ??
+    final fields =
+        _selectedTemplate?.schema.fields.where((field) {
+          if (field.type.trim().toLowerCase() == 'signature') {
+            return false;
+          }
+          if (_isManagerSignedReportMode) {
+            return true;
+          }
+          return field.isFillStage &&
+              field.key.trim() != _serverManagedWorkingDateKey;
+        }).toList() ??
         <FormTemplateField>[];
     if (_isManagerSignedReportMode &&
         !fields.any((field) => field.key.trim() == 'signed_name')) {
@@ -264,18 +344,16 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
     _checkboxGroupValues.clear();
     _radioValues.clear();
 
-    for (final field in schema.fields.where(
-      (item) {
-        if (item.type.trim().toLowerCase() == 'signature') {
-          return false;
-        }
-        if (_isManagerSignedReportMode) {
-          return true;
-        }
-        return item.isFillStage &&
-            item.key.trim() != _serverManagedWorkingDateKey;
-      },
-    )) {
+    for (final field in schema.fields.where((item) {
+      if (item.type.trim().toLowerCase() == 'signature') {
+        return false;
+      }
+      if (_isManagerSignedReportMode) {
+        return true;
+      }
+      return item.isFillStage &&
+          item.key.trim() != _serverManagedWorkingDateKey;
+    })) {
       if (field.type == 'table') {
         final rows = <_DynamicTableRow>[];
         final rawRows = sourceData[field.key];
@@ -436,6 +514,78 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
     }
   }
 
+  Future<String?> _promptReason(String title) async {
+    final controller = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: Form(
+            key: formKey,
+            child: TextFormField(
+              controller: controller,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'Reason',
+                border: OutlineInputBorder(),
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'Required';
+                }
+                return null;
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (!formKey.currentState!.validate()) return;
+                Navigator.of(dialogContext).pop(controller.text.trim());
+              },
+              child: const Text('Confirm'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    return reason;
+  }
+
+  Future<void> _saveManagerReportEdit() async {
+    if (!_formKey.currentState!.validate()) return;
+    final reason = await _promptReason('Edit report reason');
+    if (reason == null || reason.isEmpty) return;
+
+    setState(() => _isSaving = true);
+    try {
+      final message = await ApiController.adminEditWorkOrderForm(
+        widget.workOrder.id,
+        dataJson: _buildDataJson(),
+        reason: reason,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
+    }
+  }
+
   Future<void> _reloadFormDataOnly() async {
     if (_selectedTemplate == null) return;
     final form = await ApiController.getWorkOrderForm(widget.workOrder.id);
@@ -490,6 +640,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
 
   Future<void> _addRemark(FormTemplateField field) async {
     final controller = TextEditingController();
+    final reasonController = TextEditingController();
     final formKey = GlobalKey<FormState>();
     bool submitting = false;
 
@@ -507,6 +658,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
                   widget.workOrder.id,
                   fieldKey: field.key,
                   remark: controller.text.trim(),
+                  reason: reasonController.text.trim(),
                 );
                 if (!mounted) return;
                 if (dialogContext.mounted) {
@@ -535,19 +687,39 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
               title: Text('Add remark to ${field.label}'),
               content: Form(
                 key: formKey,
-                child: TextFormField(
-                  controller: controller,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    labelText: 'Remark',
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Required';
-                    }
-                    return null;
-                  },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: controller,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        labelText: 'Remark',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Required';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: reasonController,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: 'Reason',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Required';
+                        }
+                        return null;
+                      },
+                    ),
+                  ],
                 ),
               ),
               actions: [
@@ -574,25 +746,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       },
     );
     controller.dispose();
-  }
-
-  Future<void> _regeneratePdf() async {
-    setState(() => _isRegeneratingPdf = true);
-    try {
-      final message = await ApiController.regenerateWorkOrderFormPdf(
-        widget.workOrder.id,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-      await _reloadFormDataOnly();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
-    } finally {
-      if (mounted) {
-        setState(() => _isRegeneratingPdf = false);
-      }
-    }
+    reasonController.dispose();
   }
 
   Widget _buildFieldContainer(FormTemplateField field, Widget child) {
@@ -810,7 +964,8 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
               spacing: 16,
               runSpacing: 8,
               children: [
-                for (final item in infoRows) SizedBox(width: itemWidth, child: item),
+                for (final item in infoRows)
+                  SizedBox(width: itemWidth, child: item),
               ],
             );
           },
@@ -926,15 +1081,15 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       return _buildFieldContainer(
         field,
         CheckboxListTile(
-        contentPadding: EdgeInsets.zero,
-        value: _boolValues[field.key] ?? false,
-        title: Text(_fieldLabel(field)),
-        onChanged: _isManagerSignedReportMode ? null : (value) {
-          setState(() {
-            _boolValues[field.key] = value ?? false;
-          });
-        },
-      ),
+          contentPadding: EdgeInsets.zero,
+          value: _boolValues[field.key] ?? false,
+          title: Text(_fieldLabel(field)),
+          onChanged: (value) {
+            setState(() {
+              _boolValues[field.key] = value ?? false;
+            });
+          },
+        ),
       );
     }
     if (field.type == 'checkbox_group') {
@@ -957,29 +1112,29 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       return _buildFieldContainer(
         field,
         Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionTitle(_fieldLabel(field)),
-          ...runtimeOptions.map(
-            (option) => CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: selected.contains(option.value),
-              title: Text(
-                option.label.isNotEmpty ? option.label : option.value,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildSectionTitle(_fieldLabel(field)),
+            ...runtimeOptions.map(
+              (option) => CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: selected.contains(option.value),
+                title: Text(
+                  option.label.isNotEmpty ? option.label : option.value,
+                ),
+                onChanged: (value) {
+                  setState(() {
+                    if (value ?? false) {
+                      selected.add(option.value);
+                    } else {
+                      selected.remove(option.value);
+                    }
+                  });
+                },
               ),
-              onChanged: (value) {
-                setState(() {
-                  if (value ?? false) {
-                    selected.add(option.value);
-                  } else {
-                    selected.remove(option.value);
-                  }
-                });
-              },
             ),
-          ),
-        ],
-      ),
+          ],
+        ),
       );
     }
     if (field.type == 'radio_group') {
@@ -999,65 +1154,62 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       return _buildFieldContainer(
         field,
         Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionTitle(_fieldLabel(field)),
-          ...runtimeOptions.map(
-            (option) => RadioListTile<String>(
-              contentPadding: EdgeInsets.zero,
-              value: option.value,
-              groupValue: currentValue,
-              title: Text(
-                option.label.isNotEmpty ? option.label : option.value,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildSectionTitle(_fieldLabel(field)),
+            ...runtimeOptions.map(
+              (option) => RadioListTile<String>(
+                contentPadding: EdgeInsets.zero,
+                value: option.value,
+                groupValue: currentValue,
+                title: Text(
+                  option.label.isNotEmpty ? option.label : option.value,
+                ),
+                onChanged: (value) {
+                  setState(() {
+                    _radioValues[field.key] = value ?? '';
+                  });
+                },
               ),
-              onChanged: (value) {
-                setState(() {
-                  _radioValues[field.key] = value ?? '';
-                });
-              },
             ),
-          ),
-        ],
-      ),
+          ],
+        ),
       );
     }
     if (field.type == 'textarea') {
       return _buildFieldContainer(
         field,
         wrapWithQuickChoices(
-        child: TextFormField(
-          controller: _controllers[field.key],
-          maxLines: 4,
-          readOnly: _isManagerSignedReportMode,
-          decoration: InputDecoration(
-            labelText: _fieldLabel(field),
-            border: const OutlineInputBorder(),
+          child: TextFormField(
+            controller: _controllers[field.key],
+            maxLines: 4,
+            decoration: InputDecoration(
+              labelText: _fieldLabel(field),
+              border: const OutlineInputBorder(),
+            ),
           ),
         ),
-      ),
       );
     }
     if (field.type == 'date') {
       return _buildFieldContainer(
         field,
         TextFormField(
-        controller: _controllers[field.key],
-        readOnly: true,
-        onTap: _isManagerSignedReportMode
-            ? null
-            : () => _pickDateForController(_controllers[field.key]!),
-        decoration: InputDecoration(
-          labelText: _fieldLabel(field),
-          border: const OutlineInputBorder(),
-          suffixIcon: const Icon(Icons.event_outlined),
+          controller: _controllers[field.key],
+          readOnly: true,
+          onTap: () => _pickDateForController(_controllers[field.key]!),
+          decoration: InputDecoration(
+            labelText: _fieldLabel(field),
+            border: const OutlineInputBorder(),
+            suffixIcon: const Icon(Icons.event_outlined),
+          ),
+          validator: field.required
+              ? (value) {
+                  if (value == null || value.trim().isEmpty) return 'Required';
+                  return null;
+                }
+              : null,
         ),
-        validator: field.required
-            ? (value) {
-                if (value == null || value.trim().isEmpty) return 'Required';
-                return null;
-              }
-            : null,
-      ),
       );
     }
     if (field.type == 'table') {
@@ -1069,93 +1221,88 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       return _buildFieldContainer(
         field,
         Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildSectionTitle(field.label),
-              if (!_isManagerSignedReportMode)
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _buildSectionTitle(field.label),
                 TextButton.icon(
-                onPressed: () {
-                  setState(() => rows.add(_DynamicTableRow(field)));
-                },
-                icon: const Icon(Icons.add),
-                label: const Text('Add row'),
-              ),
-              if (_isManagerSignedReportMode) const SizedBox.shrink(),
-            ],
-          ),
-          ...rows.asMap().entries.map((entry) {
-            final index = entry.key;
-            final row = entry.value;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final isNarrow = constraints.maxWidth < 720;
-                  final removeButton = _isManagerSignedReportMode
-                      ? const SizedBox.shrink()
-                      : IconButton(
-                          onPressed: () {
-                            setState(() {
-                              row.dispose();
-                              rows.removeAt(index);
-                            });
-                          },
-                          icon: const Icon(Icons.delete_outline),
-                        );
-
-                  final fieldWidgets = columns.map((column) {
-                    final key = '${column['key'] ?? ''}'.trim();
-                    return TextFormField(
-                      controller: row.controllers[key],
-                      readOnly: _isManagerSignedReportMode,
-                      decoration: InputDecoration(
-                        labelText: '${column['label'] ?? key}',
-                        border: const OutlineInputBorder(),
-                      ),
+                  onPressed: () {
+                    setState(() => rows.add(_DynamicTableRow(field)));
+                  },
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add row'),
+                ),
+              ],
+            ),
+            ...rows.asMap().entries.map((entry) {
+              final index = entry.key;
+              final row = entry.value;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isNarrow = constraints.maxWidth < 720;
+                    final removeButton = IconButton(
+                      onPressed: () {
+                        setState(() {
+                          row.dispose();
+                          rows.removeAt(index);
+                        });
+                      },
+                      icon: const Icon(Icons.delete_outline),
                     );
-                  }).toList();
 
-                  if (isNarrow) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                    final fieldWidgets = columns.map((column) {
+                      final key = '${column['key'] ?? ''}'.trim();
+                      return TextFormField(
+                        controller: row.controllers[key],
+                        decoration: InputDecoration(
+                          labelText: '${column['label'] ?? key}',
+                          border: const OutlineInputBorder(),
+                        ),
+                      );
+                    }).toList();
+
+                    if (isNarrow) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          ...fieldWidgets.map(
+                            (fieldWidget) => Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: fieldWidget,
+                            ),
+                          ),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: removeButton,
+                          ),
+                        ],
+                      );
+                    }
+
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         ...fieldWidgets.map(
-                          (fieldWidget) => Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: fieldWidget,
+                          (fieldWidget) => Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: fieldWidget,
+                            ),
                           ),
                         ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: removeButton,
-                        ),
+                        removeButton,
                       ],
                     );
-                  }
-
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      ...fieldWidgets.map(
-                        (fieldWidget) => Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: fieldWidget,
-                          ),
-                        ),
-                      ),
-                      removeButton,
-                    ],
-                  );
-                },
-              ),
-            );
-          }),
-        ],
-      ),
+                  },
+                ),
+              );
+            }),
+          ],
+        ),
       );
     }
     if (field.type == 'multiselect_with_remarks') {
@@ -1175,73 +1322,71 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       return _buildFieldContainer(
         field,
         Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionTitle(_fieldLabel(field)),
-          ...runtimeOptions.map((option) {
-            _DynamicChoiceSelection current;
-            final matchIndex = selectedItems.indexWhere(
-              (item) => item.value == option.value,
-            );
-            if (matchIndex >= 0) {
-              current = selectedItems[matchIndex];
-            } else {
-              current = _DynamicChoiceSelection(
-                value: option.value,
-                label: option.label.isNotEmpty ? option.label : option.value,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildSectionTitle(_fieldLabel(field)),
+            ...runtimeOptions.map((option) {
+              _DynamicChoiceSelection current;
+              final matchIndex = selectedItems.indexWhere(
+                (item) => item.value == option.value,
               );
-              selectedItems.add(current);
-            }
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: current.selected,
-                    title: Text(
-                      option.label.isNotEmpty ? option.label : option.value,
-                    ),
-                    onChanged: _isManagerSignedReportMode ? null : (value) {
-                      setState(() => current.selected = value ?? false);
-                    },
-                  ),
-                  if (current.selected)
-                    TextFormField(
-                      controller: current.remarkController,
-                      readOnly: _isManagerSignedReportMode,
-                      decoration: const InputDecoration(
-                        labelText: 'Remark',
-                        border: OutlineInputBorder(),
+              if (matchIndex >= 0) {
+                current = selectedItems[matchIndex];
+              } else {
+                current = _DynamicChoiceSelection(
+                  value: option.value,
+                  label: option.label.isNotEmpty ? option.label : option.value,
+                );
+                selectedItems.add(current);
+              }
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: current.selected,
+                      title: Text(
+                        option.label.isNotEmpty ? option.label : option.value,
                       ),
+                      onChanged: (value) {
+                        setState(() => current.selected = value ?? false);
+                      },
                     ),
-                ],
-              ),
-            );
-          }),
-        ],
-      ),
+                    if (current.selected)
+                      TextFormField(
+                        controller: current.remarkController,
+                        decoration: const InputDecoration(
+                          labelText: 'Remark',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
       );
     }
 
     return _buildFieldContainer(
       field,
       wrapWithQuickChoices(
-      child: TextFormField(
-        controller: _controllers[field.key],
-        readOnly: _isManagerSignedReportMode,
-        decoration: InputDecoration(
-          labelText: _fieldLabel(field),
-          border: const OutlineInputBorder(),
+        child: TextFormField(
+          controller: _controllers[field.key],
+          decoration: InputDecoration(
+            labelText: _fieldLabel(field),
+            border: const OutlineInputBorder(),
+          ),
+          validator: field.required
+              ? (value) {
+                  if (value == null || value.trim().isEmpty) return 'Required';
+                  return null;
+                }
+              : null,
         ),
-        validator: field.required
-            ? (value) {
-                if (value == null || value.trim().isEmpty) return 'Required';
-              return null;
-            }
-          : null,
-      ),
       ),
     );
   }
@@ -1309,14 +1454,14 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           child: _isManagerSignedReportMode
               ? FilledButton(
-                  onPressed: _isRegeneratingPdf ? null : _regeneratePdf,
-                  child: _isRegeneratingPdf
+                  onPressed: _isSaving ? null : _saveManagerReportEdit,
+                  child: _isSaving
                       ? const SizedBox(
                           width: 18,
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Regenerate PDF'),
+                      : const Text('Update Report'),
                 )
               : _isCompletedEditMode
               ? FilledButton(

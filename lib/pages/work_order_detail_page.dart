@@ -194,6 +194,8 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
 
   bool get _hasManagerActions => _hasRole('MANAGER') || _hasRole('ADMIN');
 
+  bool get _hasOfficeAdminRole => _hasRole('MANAGER');
+
   bool get _hasEngineerRole => _hasRole('ENGINEER');
 
   bool _isMine(WorkOrder order) {
@@ -213,19 +215,6 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
     return ownerUserId.isNotEmpty &&
         currentUserId.isNotEmpty &&
         ownerUserId != currentUserId;
-  }
-
-  bool get _canCreateTransferRequest {
-    const allowedStatuses = {
-      'assigned',
-      'planned',
-      'working',
-      'cannot_completed',
-    };
-    return _hasRole('ENGINEER') &&
-        _workOrder.ownerUserId.trim().isNotEmpty &&
-        !_workOrder.isTransferring &&
-        allowedStatuses.contains(_workOrder.status.trim().toLowerCase());
   }
 
   bool get _isCurrentEngineerOwner {
@@ -1019,19 +1008,34 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
           await _load();
         }
         return;
-      } else if (action == 'add_attachment') {
-        await _addAttachment();
-        return;
-      } else if (action == 'view_report') {
-        final updated = await Navigator.of(context).push<bool>(
+      } else if (action == 'add_remarks') {
+        await Navigator.of(context).push<bool>(
           MaterialPageRoute(
             builder: (_) => WorkOrderReportFormPage(workOrder: _workOrder),
           ),
         );
-        if (updated == true) {
-          await _load();
-        }
+        if (!mounted) return;
+        await _load();
         return;
+      } else if (action == 'add_attachment') {
+        await _addAttachment();
+        return;
+      } else if (action == 'view_report') {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => WorkOrderReportPdfPage(workOrder: _workOrder),
+          ),
+        );
+        return;
+      } else if (action == 'approve') {
+        feedback = await ApiController.approveWorkOrder(_workOrder.id);
+      } else if (action == 'reject') {
+        final reason = await _promptReason('Reject work order');
+        if (reason == null || reason.isEmpty) return;
+        feedback = await ApiController.rejectWorkOrder(
+          _workOrder.id,
+          reason: reason,
+        );
       } else if (action == 'send_email') {
         feedback = 'Multiple-select send email is not wired yet.';
       } else if (action == 'start') {
@@ -1069,14 +1073,20 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
         items.add(const MapEntry('assign_to_engineer', 'Assign to engineer'));
       } else if (normalizedStatus == 'assigned' ||
           normalizedStatus == 'planned' ||
-          normalizedStatus == 'cannot_completed') {
+          normalizedStatus == 'cannot_completed' ||
+          normalizedStatus == 'rejected') {
         items.add(const MapEntry('assign_to_engineer', 'Assign to engineer'));
         items.add(
           const MapEntry('revoke_to_unassigned', 'Return to public pool'),
         );
-      } else if (normalizedStatus == 'signed' ||
-          normalizedStatus == 'signed_edited') {
+      } else if (_hasOfficeAdminRole &&
+          (normalizedStatus == 'signed' ||
+              normalizedStatus == 'signed_edited')) {
         items.add(const MapEntry('view_report', 'View Report'));
+        items.add(const MapEntry('edit_report', 'Edit Report'));
+        items.add(const MapEntry('add_remarks', 'Add remarks'));
+        items.add(const MapEntry('approve', 'Accept'));
+        items.add(const MapEntry('reject', 'Reject'));
       } else if (normalizedStatus == 'approved') {
         items.add(const MapEntry('view_report', 'View Report'));
         items.add(const MapEntry('send_email', 'Send email'));
@@ -1092,7 +1102,8 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
         items.add(const MapEntry('take', 'Take it'));
       } else if (_isMine(_workOrder)) {
         if (normalizedStatus == 'assigned' ||
-            normalizedStatus == 'cannot_completed') {
+            normalizedStatus == 'cannot_completed' ||
+            normalizedStatus == 'rejected') {
           items.add(const MapEntry('plan', 'Schedule'));
           items.add(const MapEntry('start', 'Start work'));
           items.add(const MapEntry('transfer_away', 'Hand off'));
@@ -1152,8 +1163,14 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
         return Icons.draw_outlined;
       case 'edit_report':
         return Icons.edit_outlined;
+      case 'add_remarks':
+        return Icons.rate_review_outlined;
       case 'view_report':
         return Icons.visibility_outlined;
+      case 'approve':
+        return Icons.check_circle_outline;
+      case 'reject':
+        return Icons.cancel_outlined;
       case 'add_attachment':
         return Icons.attach_file_outlined;
       case 'send_email':
@@ -1722,56 +1739,6 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
     return 'Attachment';
   }
 
-  IconData _iconForHistoryAction(String action) {
-    switch (action) {
-      case 'created':
-        return Icons.add_task_outlined;
-      case 'picked':
-        return Icons.back_hand_outlined;
-      case 'assigned':
-        return Icons.assignment_ind_outlined;
-      case 'released_to_pool':
-        return Icons.move_to_inbox_outlined;
-      case 'planned':
-        return Icons.event_note_outlined;
-      case 'transfer_requested':
-        return Icons.forward_to_inbox_outlined;
-      case 'transfer_accepted':
-        return Icons.assignment_turned_in_outlined;
-      case 'transfer_rejected':
-        return Icons.person_off_outlined;
-      case 'started':
-        return Icons.play_circle_outline;
-      case 'cannot_completed':
-        return Icons.error_outline;
-      case 'completed':
-        return Icons.task_alt_outlined;
-      case 'form_created':
-      case 'form_saved':
-      case 'form_submitted':
-      case 'form_signed':
-      case 'form_admin_edited':
-      case 'form_remark_added':
-        return Icons.description_outlined;
-      case 'approved':
-        return Icons.verified_outlined;
-      case 'attachment_added':
-      case 'attachment_uploaded':
-      case 'attachment_deleted':
-        return Icons.attach_file_outlined;
-      case 'merged_pdf_regenerated':
-      case 'source_file_uploaded':
-      case 'source_file_deleted':
-        return Icons.picture_as_pdf_outlined;
-      case 'email_batch_added':
-      case 'email_sent':
-      case 'email_failed':
-        return Icons.send_outlined;
-      default:
-        return Icons.history;
-    }
-  }
-
   String _historyActionTitle(WorkOrderHistoryEntry item) {
     final action = item.action.trim();
     if (action.isEmpty) return 'History';
@@ -2116,6 +2083,11 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
     );
   }
 
+  bool get _isActiveWorkingAssignment {
+    final status = _workOrder.status.trim().toLowerCase();
+    return status == 'working' && _isMine(_workOrder);
+  }
+
   List<Widget> _buildSectionCards() {
     return [
       _buildSection(
@@ -2213,6 +2185,26 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
                 ),
               ),
           ],
+          if (_isActiveWorkingAssignment) ...[
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFD1FAE5),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF10B981)),
+              ),
+              child: const Text(
+                'You have an active work order in progress. You must stay on this page until the work is completed.',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF065F46),
+                ),
+              ),
+            ),
+          ],
           if (_buildDetailActions().isNotEmpty) ...[
             const SizedBox(height: 14),
             Wrap(
@@ -2302,112 +2294,120 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          _workOrder.referenceNumber.isEmpty
-              ? 'Work Order Detail'
-              : _workOrder.woType.trim().isEmpty
-              ? _workOrder.referenceNumber
-              : '${_workOrder.referenceNumber} (${_workOrder.woType.trim().toUpperCase()})',
+    final isLocked = _isActiveWorkingAssignment;
+    return PopScope(
+      canPop: !isLocked,
+      child: Scaffold(
+        appBar: AppBar(
+          automaticallyImplyLeading: !isLocked,
+          leading: isLocked ? const SizedBox.shrink() : null,
+          title: Text(
+            _workOrder.referenceNumber.isEmpty
+                ? 'Work Order Detail'
+                : _workOrder.woType.trim().isEmpty
+                ? _workOrder.referenceNumber
+                : '${_workOrder.referenceNumber} (${_workOrder.woType.trim().toUpperCase()})',
+          ),
         ),
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : LayoutBuilder(
-              builder: (context, constraints) {
-                final sections = _buildSectionCards();
-                final useDesktopSplit =
-                    _isDesktopSplitLayout(context) && _showDesktopAttachment;
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : LayoutBuilder(
+                builder: (context, constraints) {
+                  final sections = _buildSectionCards();
+                  final useDesktopSplit =
+                      _isDesktopSplitLayout(context) && _showDesktopAttachment;
 
-                Widget detailContent = RefreshIndicator(
-                  onRefresh: _load,
-                  child: LayoutBuilder(
-                    builder: (context, innerConstraints) {
-                      final useTwoColumns = innerConstraints.maxWidth >= 1100;
+                  Widget detailContent = RefreshIndicator(
+                    onRefresh: _load,
+                    child: LayoutBuilder(
+                      builder: (context, innerConstraints) {
+                        final useTwoColumns = innerConstraints.maxWidth >= 1100;
 
-                      if (!useTwoColumns) {
-                        return ListView.separated(
+                        if (!useTwoColumns) {
+                          return ListView.separated(
+                            padding: const EdgeInsets.all(16),
+                            itemCount: sections.length,
+                            separatorBuilder: (_, _) =>
+                                const SizedBox(height: 16),
+                            itemBuilder: (_, index) => sections[index],
+                          );
+                        }
+
+                        final splitIndex = (sections.length / 2).ceil();
+                        final leftColumn = sections.take(splitIndex).toList();
+                        final rightColumn = sections.skip(splitIndex).toList();
+
+                        return SingleChildScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(),
                           padding: const EdgeInsets.all(16),
-                          itemCount: sections.length,
-                          separatorBuilder: (_, _) =>
-                              const SizedBox(height: 16),
-                          itemBuilder: (_, index) => sections[index],
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    for (
+                                      int i = 0;
+                                      i < leftColumn.length;
+                                      i++
+                                    ) ...[
+                                      if (i > 0) const SizedBox(height: 16),
+                                      leftColumn[i],
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    for (
+                                      int i = 0;
+                                      i < rightColumn.length;
+                                      i++
+                                    ) ...[
+                                      if (i > 0) const SizedBox(height: 16),
+                                      rightColumn[i],
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
                         );
-                      }
+                      },
+                    ),
+                  );
 
-                      final splitIndex = (sections.length / 2).ceil();
-                      final leftColumn = sections.take(splitIndex).toList();
-                      final rightColumn = sections.skip(splitIndex).toList();
+                  if (!useDesktopSplit) {
+                    return detailContent;
+                  }
 
-                      return SingleChildScrollView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(16),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  for (
-                                    int i = 0;
-                                    i < leftColumn.length;
-                                    i++
-                                  ) ...[
-                                    if (i > 0) const SizedBox(height: 16),
-                                    leftColumn[i],
-                                  ],
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  for (
-                                    int i = 0;
-                                    i < rightColumn.length;
-                                    i++
-                                  ) ...[
-                                    if (i > 0) const SizedBox(height: 16),
-                                    rightColumn[i],
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ],
+                  final panelHeight = constraints.maxHeight;
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: SizedBox(
+                          height: panelHeight > 0 ? panelHeight : null,
+                          child: detailContent,
                         ),
-                      );
-                    },
-                  ),
-                );
-
-                if (!useDesktopSplit) {
-                  return detailContent;
-                }
-
-                final panelHeight = constraints.maxHeight;
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: SizedBox(
-                        height: panelHeight > 0 ? panelHeight : null,
-                        child: detailContent,
                       ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: _buildDesktopAttachmentPanel(
-                        height: panelHeight > 0 ? panelHeight : 860,
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: _buildDesktopAttachmentPanel(
+                          height: panelHeight > 0 ? panelHeight : 860,
+                        ),
                       ),
-                    ),
-                  ],
-                );
-              },
-            ),
+                    ],
+                  );
+                },
+              ),
+      ),
     );
   }
 }

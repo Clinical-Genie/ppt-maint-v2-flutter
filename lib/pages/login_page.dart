@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:maintapp/api/api_controller.dart';
 import 'package:maintapp/language/mlang.dart';
 import 'package:maintapp/model/user_info.dart';
+import 'package:maintapp/model/work_order.dart';
+import 'package:maintapp/pages/work_order_detail_page.dart';
 import 'package:maintapp/state/app_state.dart';
 import 'package:maintapp/state/login_session_controller.dart';
 
@@ -54,6 +56,45 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
+  Future<bool> _redirectToActiveWorkingWorkOrder(BuildContext context) async {
+    final currentUser = LoginSessionController.instance.userInfo;
+    if (!_isEngineer(currentUser)) {
+      return false;
+    }
+
+    try {
+      final activeWorkOrders = await ApiController.listWorkOrders(
+        user: 'me',
+        status: 'working',
+        pageSize: 1,
+      );
+      if (activeWorkOrders.items.isEmpty) {
+        return false;
+      }
+
+      final WorkOrder activeWorkOrder = activeWorkOrders.items.first;
+      if (activeWorkOrder.ownerUserId.trim().isEmpty ||
+          activeWorkOrder.ownerUserId.trim() != currentUser.id.trim()) {
+        return false;
+      }
+
+      if (!mounted) {
+        return false;
+      }
+
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => WorkOrderDetailPage(workOrderId: activeWorkOrder.id),
+        ),
+      );
+      return true;
+    } catch (e, stackTrace) {
+      log('Active working WO redirect failed: $e');
+      log(stackTrace.toString());
+      return false;
+    }
+  }
+
   @override
   void dispose() {
     _usernameController.dispose();
@@ -90,6 +131,9 @@ class _LoginPageState extends State<LoginPage> {
         condition: "After Login",
       );
       if (mounted) {
+        if (await _redirectToActiveWorkingWorkOrder(context)) {
+          return;
+        }
         Navigator.of(context).pushReplacementNamed('/home');
       }
     } else {
@@ -128,6 +172,9 @@ class _LoginPageState extends State<LoginPage> {
           } catch (_) {}
         } catch (_) {}
         if (mounted) {
+          if (await _redirectToActiveWorkingWorkOrder(context)) {
+            return;
+          }
           Navigator.of(context).pushReplacementNamed('/home');
           return;
         }

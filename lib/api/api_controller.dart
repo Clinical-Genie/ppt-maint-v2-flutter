@@ -176,6 +176,8 @@ class ApiPaths {
       '/api/work-orders/$workOrderId/merge-pdf';
   static String approveWorkOrder(String workOrderId) =>
       '/api/work-orders/$workOrderId/approve';
+  static String rejectWorkOrder(String workOrderId) =>
+      '/api/work-orders/$workOrderId/reject';
   static String workOrderForm(String workOrderId) =>
       '/api/work-orders/$workOrderId/form';
   static String submitWorkOrderForm(String workOrderId) =>
@@ -1366,9 +1368,7 @@ class ApiController {
       apiNameForLog: 'deleteWorkOrderAttachment',
       subPath: ApiPaths.workOrderAttachmentById(workOrderId, attachmentId),
       method: 'delete',
-      postParameters: {
-        if (reason.trim().isNotEmpty) 'reason': reason.trim(),
-      },
+      postParameters: {if (reason.trim().isNotEmpty) 'reason': reason.trim()},
       fallbackMessage: 'Attachment deleted.',
     );
   }
@@ -1582,6 +1582,19 @@ class ApiController {
       method: 'post',
       postParameters: const {},
       fallbackMessage: 'Work order approved.',
+    );
+  }
+
+  static Future<String> rejectWorkOrder(
+    String workOrderId, {
+    required String reason,
+  }) async {
+    return _callMessage(
+      apiNameForLog: 'rejectWorkOrder',
+      subPath: ApiPaths.rejectWorkOrder(workOrderId),
+      method: 'post',
+      postParameters: {'reason': reason},
+      fallbackMessage: 'Work order rejected.',
     );
   }
 
@@ -1892,12 +1905,17 @@ class ApiController {
     String workOrderId, {
     required String fieldKey,
     required String remark,
+    required String reason,
   }) async {
     return _callMessage(
       apiNameForLog: 'addWorkOrderFormRemark',
       subPath: ApiPaths.remarkWorkOrderForm(workOrderId),
       method: 'post',
-      postParameters: {'field_key': fieldKey, 'remark': remark},
+      postParameters: {
+        'field_key': fieldKey,
+        'remark': remark,
+        'reason': reason,
+      },
       fallbackMessage: 'Remark added.',
     );
   }
