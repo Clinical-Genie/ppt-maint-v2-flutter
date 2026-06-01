@@ -1023,7 +1023,15 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
         await _addAttachment();
         return;
       } else if (action == 'view_report') {
-        feedback = 'View Report page is not wired yet.';
+        final updated = await Navigator.of(context).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => WorkOrderReportFormPage(workOrder: _workOrder),
+          ),
+        );
+        if (updated == true) {
+          await _load();
+        }
+        return;
       } else if (action == 'send_email') {
         feedback = 'Multiple-select send email is not wired yet.';
       } else if (action == 'start') {
@@ -1070,6 +1078,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
           normalizedStatus == 'signed_edited') {
         items.add(const MapEntry('view_report', 'View Report'));
       } else if (normalizedStatus == 'approved') {
+        items.add(const MapEntry('view_report', 'View Report'));
         items.add(const MapEntry('send_email', 'Send email'));
       }
     }

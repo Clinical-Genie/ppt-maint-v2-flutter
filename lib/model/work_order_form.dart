@@ -7,6 +7,8 @@ class WorkOrderForm {
   String reportNo = '';
   String status = '';
   Map<String, dynamic> dataJson = {};
+  Map<String, List<WorkOrderFormFieldRemarkItem>> fieldRemarks = {};
+  List<WorkOrderFormFieldRemarkItem> fieldRemarkItems = [];
   String pdfUrl = '';
   String createdAt = '';
   String updatedAt = '';
@@ -25,9 +27,44 @@ class WorkOrderForm {
       json,
       'data_json',
     );
+    fieldRemarkItems = DataHelper.getListOfMapSafely(json, 'field_remark_items')
+        .map((item) => WorkOrderFormFieldRemarkItem.fromJson(item))
+        .toList();
+    final rawFieldRemarks = json['field_remarks'];
+    if (rawFieldRemarks is Map) {
+      fieldRemarks = rawFieldRemarks.map((key, value) {
+        final items = value is List
+            ? value
+                  .whereType<Map<dynamic, dynamic>>()
+                  .map((item) => WorkOrderFormFieldRemarkItem.fromJson(item))
+                  .toList()
+            : <WorkOrderFormFieldRemarkItem>[];
+        return MapEntry('$key'.trim(), items);
+      });
+    }
     pdfUrl = DataHelper.getStringSafely(json, 'pdf_url', '');
     createdAt = DataHelper.getStringSafely(json, 'created_at', '');
     updatedAt = DataHelper.getStringSafely(json, 'updated_at', '');
+  }
+}
+
+class WorkOrderFormFieldRemarkItem {
+  String id = '';
+  String fieldKey = '';
+  String remark = '';
+  String createdBy = '';
+  String createdByName = '';
+  String createdAt = '';
+
+  WorkOrderFormFieldRemarkItem();
+
+  WorkOrderFormFieldRemarkItem.fromJson(Map<dynamic, dynamic> json) {
+    id = DataHelper.getStringSafely(json, 'id', '');
+    fieldKey = DataHelper.getStringSafely(json, 'field_key', '');
+    remark = DataHelper.getStringSafely(json, 'remark', '');
+    createdBy = DataHelper.getStringSafely(json, 'created_by', '');
+    createdByName = DataHelper.getStringSafely(json, 'created_by_name', '');
+    createdAt = DataHelper.getStringSafely(json, 'created_at', '');
   }
 }
 
