@@ -20,7 +20,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.primeprioritytech.maint"
+        applicationId = "com.primeprioritytech.maintapp"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

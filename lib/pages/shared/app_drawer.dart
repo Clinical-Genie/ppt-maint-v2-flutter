@@ -122,6 +122,26 @@ class AppDrawer extends StatelessWidget {
                   Navigator.of(context).pushReplacementNamed('/email-batches');
                 },
               ),
+            if (hasEmailBatchAccess)
+              ListTile(
+                leading: const Icon(Icons.description_outlined),
+                title: const Text('Email Templates'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(
+                    context,
+                  ).pushReplacementNamed('/email-templates');
+                },
+              ),
+            if (hasEmailBatchAccess)
+              ListTile(
+                leading: const Icon(Icons.contacts_outlined),
+                title: const Text('Address Book'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).pushReplacementNamed('/email-contacts');
+                },
+              ),
             if (hasTemplateChoiceGroupAccess)
               ListTile(
                 leading: const Icon(Icons.list_alt),
@@ -139,7 +159,9 @@ class AppDrawer extends StatelessWidget {
                 title: const Text('Transfer Requests'),
                 onTap: () async {
                   Navigator.of(context).pop();
-                  Navigator.of(context).pushReplacementNamed('/transfer-requests');
+                  Navigator.of(
+                    context,
+                  ).pushReplacementNamed('/transfer-requests');
                 },
               ),
             if (hasUserManagementAccess)
@@ -187,7 +209,9 @@ class AppDrawer extends StatelessWidget {
                     ),
                   );
                   await session.logout();
-                  MyApp.navigatorKey.currentState?.popUntil((route) => route.isFirst);
+                  MyApp.navigatorKey.currentState?.popUntil(
+                    (route) => route.isFirst,
+                  );
                   MyApp.navigatorKey.currentState?.pushNamedAndRemoveUntil(
                     '/login',
                     (route) => false,

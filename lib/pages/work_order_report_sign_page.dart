@@ -80,7 +80,7 @@ class _WorkOrderReportSignPageState extends State<WorkOrderReportSignPage> {
       final rawPdfUrl = form.pdfUrl.trim();
       _pdfUrl = rawPdfUrl.isEmpty
           ? ''
-          : ApiController.resolveServerUrl(rawPdfUrl);
+          : _withPdfRefreshToken(ApiController.resolveServerUrl(rawPdfUrl));
       await LoginSessionController.instance.refreshTokenIfNeeded();
       final token = LoginSessionController.instance.loginInfo.accessToken
           .trim();
@@ -102,6 +102,18 @@ class _WorkOrderReportSignPageState extends State<WorkOrderReportSignPage> {
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  String _withPdfRefreshToken(String url) {
+    final uri = Uri.parse(url);
+    return uri
+        .replace(
+          queryParameters: {
+            ...uri.queryParameters,
+            '_pdf_refresh': DateTime.now().microsecondsSinceEpoch.toString(),
+          },
+        )
+        .toString();
   }
 
   Future<void> _editReport() async {
@@ -126,182 +138,183 @@ class _WorkOrderReportSignPageState extends State<WorkOrderReportSignPage> {
         context: context,
         barrierDismissible: !submitting,
         builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            Future<void> submit() async {
-              if (!formKey.currentState!.validate()) return;
-              if (points.whereType<Offset>().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Please input signature first.'),
-                  ),
-                );
-                return;
-              }
-
-              setDialogState(() => submitting = true);
-              try {
-                final boundary =
-                    boundaryKey.currentContext?.findRenderObject()
-                        as RenderRepaintBoundary?;
-                if (boundary == null) {
-                  throw Exception('Signature canvas is not ready.');
-                }
-                final image = await boundary.toImage(pixelRatio: 3);
-                final byteData = await image.toByteData(
-                  format: ui.ImageByteFormat.png,
-                );
-                if (byteData == null) {
-                  throw Exception('Unable to generate signature image.');
-                }
-                final signatureBytes = byteData.buffer.asUint8List();
-
-                final result = await ApiController.signWorkOrderForm(
-                  widget.workOrder.id,
-                  signedName: _staffIdNameController.text.trim(),
-                  dataJson: Map<String, dynamic>.from(_baseDataJson),
-                  signatureBytes: signatureBytes,
-                );
-                if (!mounted) return;
-                if (dialogContext.mounted) {
-                  Navigator.of(dialogContext).pop();
-                }
-                ScaffoldMessenger.of(
-                  this.context,
-                ).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      result.message.trim().isEmpty
-                          ? 'Form signed.'
-                          : result.message.trim(),
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              Future<void> submit() async {
+                if (!formKey.currentState!.validate()) return;
+                if (points.whereType<Offset>().isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Please input signature first.'),
                     ),
-                  ),
-                );
-                Navigator.of(this.context).pop(true);
-              } catch (e) {
-                if (!mounted) return;
-                ScaffoldMessenger.of(
-                  this.context,
-                ).showSnackBar(SnackBar(content: Text('$e')));
-                if (dialogContext.mounted) {
-                  setDialogState(() => submitting = false);
+                  );
+                  return;
+                }
+
+                setDialogState(() => submitting = true);
+                try {
+                  final boundary =
+                      boundaryKey.currentContext?.findRenderObject()
+                          as RenderRepaintBoundary?;
+                  if (boundary == null) {
+                    throw Exception('Signature canvas is not ready.');
+                  }
+                  final image = await boundary.toImage(pixelRatio: 3);
+                  final byteData = await image.toByteData(
+                    format: ui.ImageByteFormat.png,
+                  );
+                  if (byteData == null) {
+                    throw Exception('Unable to generate signature image.');
+                  }
+                  final signatureBytes = byteData.buffer.asUint8List();
+
+                  final result = await ApiController.signWorkOrderForm(
+                    widget.workOrder.id,
+                    signedName: _staffIdNameController.text.trim(),
+                    dataJson: Map<String, dynamic>.from(_baseDataJson),
+                    signatureBytes: signatureBytes,
+                  );
+                  if (!mounted) return;
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                  }
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        result.message.trim().isEmpty
+                            ? 'Form signed.'
+                            : result.message.trim(),
+                      ),
+                    ),
+                  );
+                  Navigator.of(this.context).pop(true);
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(
+                    this.context,
+                  ).showSnackBar(SnackBar(content: Text('$e')));
+                  if (dialogContext.mounted) {
+                    setDialogState(() => submitting = false);
+                  }
                 }
               }
-            }
 
-            return AlertDialog(
-              title: const Text('Sign Report'),
-              content: SizedBox(
-                width: 520,
-                child: Form(
-                  key: formKey,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Signature',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
+              return AlertDialog(
+                title: const Text('Sign Report'),
+                content: SizedBox(
+                  width: 520,
+                  child: Form(
+                    key: formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Signature',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        width: double.infinity,
-                        height: 220,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: const Color(0xFFCBD5E1)),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: GestureDetector(
-                            onPanStart: (details) {
-                              final box =
-                                  boundaryKey.currentContext?.findRenderObject()
-                                      as RenderBox?;
-                              if (box == null) return;
-                              final local = box.globalToLocal(
-                                details.globalPosition,
-                              );
-                              setDialogState(() => points.add(local));
-                            },
-                            onPanUpdate: (details) {
-                              final box =
-                                  boundaryKey.currentContext?.findRenderObject()
-                                      as RenderBox?;
-                              if (box == null) return;
-                              final local = box.globalToLocal(
-                                details.globalPosition,
-                              );
-                              setDialogState(() => points.add(local));
-                            },
-                            onPanEnd: (_) {
-                              setDialogState(() => points.add(null));
-                            },
-                            child: RepaintBoundary(
-                              key: boundaryKey,
-                              child: CustomPaint(
-                                painter: _SignaturePainter(
-                                  List<Offset?>.from(points),
+                        const SizedBox(height: 8),
+                        Container(
+                          width: double.infinity,
+                          height: 220,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0xFFCBD5E1)),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(16),
+                            child: GestureDetector(
+                              onPanStart: (details) {
+                                final box =
+                                    boundaryKey.currentContext
+                                            ?.findRenderObject()
+                                        as RenderBox?;
+                                if (box == null) return;
+                                final local = box.globalToLocal(
+                                  details.globalPosition,
+                                );
+                                setDialogState(() => points.add(local));
+                              },
+                              onPanUpdate: (details) {
+                                final box =
+                                    boundaryKey.currentContext
+                                            ?.findRenderObject()
+                                        as RenderBox?;
+                                if (box == null) return;
+                                final local = box.globalToLocal(
+                                  details.globalPosition,
+                                );
+                                setDialogState(() => points.add(local));
+                              },
+                              onPanEnd: (_) {
+                                setDialogState(() => points.add(null));
+                              },
+                              child: RepaintBoundary(
+                                key: boundaryKey,
+                                child: CustomPaint(
+                                  painter: _SignaturePainter(
+                                    List<Offset?>.from(points),
+                                  ),
+                                  child: const SizedBox.expand(),
                                 ),
-                                child: const SizedBox.expand(),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: OutlinedButton(
-                          onPressed: submitting
-                              ? null
-                              : () => setDialogState(() => points.clear()),
-                          child: const Text('Clear Signature'),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: OutlinedButton(
+                            onPressed: submitting
+                                ? null
+                                : () => setDialogState(() => points.clear()),
+                            child: const Text('Clear Signature'),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextFormField(
-                        controller: _staffIdNameController,
-                        decoration: const InputDecoration(
-                          labelText: 'Staff ID / Name',
-                          border: OutlineInputBorder(),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: _staffIdNameController,
+                          decoration: const InputDecoration(
+                            labelText: 'Staff ID / Name',
+                            border: OutlineInputBorder(),
+                          ),
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) {
+                              return 'Required';
+                            }
+                            return null;
+                          },
                         ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Required';
-                          }
-                          return null;
-                        },
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: submitting
-                      ? null
-                      : () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: submitting ? null : submit,
-                  child: submitting
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('OK'),
-                ),
-              ],
-            );
-          },
-        );
-      }),
+                actions: [
+                  TextButton(
+                    onPressed: submitting
+                        ? null
+                        : () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(
+                    onPressed: submitting ? null : submit,
+                    child: submitting
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('OK'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
@@ -322,6 +335,7 @@ class _WorkOrderReportSignPageState extends State<WorkOrderReportSignPage> {
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: WorkOrderPdfViewer(
+          key: ValueKey(_pdfUrl),
           networkUrl: _pdfUrl,
           contentType: 'application/pdf',
           networkHeaders: _pdfHeaders,

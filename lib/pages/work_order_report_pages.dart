@@ -46,7 +46,9 @@ class _WorkOrderReportPdfPageState extends State<WorkOrderReportPdfPage> {
           .trim();
       if (!mounted) return;
       setState(() {
-        _pdfUrl = ApiController.resolveServerUrl(rawPdfUrl);
+        _pdfUrl = _withPdfRefreshToken(
+          ApiController.resolveServerUrl(rawPdfUrl),
+        );
         _headers = token.isEmpty
             ? const {}
             : {'Authorization': 'Bearer $token'};
@@ -59,6 +61,18 @@ class _WorkOrderReportPdfPageState extends State<WorkOrderReportPdfPage> {
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  String _withPdfRefreshToken(String url) {
+    final uri = Uri.parse(url);
+    return uri
+        .replace(
+          queryParameters: {
+            ...uri.queryParameters,
+            '_pdf_refresh': DateTime.now().microsecondsSinceEpoch.toString(),
+          },
+        )
+        .toString();
   }
 
   @override
@@ -80,6 +94,7 @@ class _WorkOrderReportPdfPageState extends State<WorkOrderReportPdfPage> {
           : Padding(
               padding: const EdgeInsets.all(12),
               child: WorkOrderPdfViewer(
+                key: ValueKey(_pdfUrl),
                 networkUrl: _pdfUrl,
                 contentType: 'application/pdf',
                 networkHeaders: _headers,
@@ -116,17 +131,18 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
   final Map<String, Set<String>> _checkboxGroupValues = {};
   final Map<String, String> _radioValues = {};
   final Set<String> _remarkSubmittingKeys = <String>{};
+  final Set<String> _remarkMutatingIds = <String>{};
 
   bool get _isCompletedEditMode =>
       widget.workOrder.status.trim().toLowerCase() == 'completed';
 
+  bool get _hasManagerRole => LoginSessionController.instance.userInfo.roles
+      .any((role) => role.trim().toUpperCase() == 'MANAGER');
+
   bool get _isManagerSignedReportMode {
-    final roles = LoginSessionController.instance.userInfo.roles
-        .map((item) => item.toUpperCase())
-        .toSet();
-    final isManager = roles.contains('MANAGER');
-    final status = widget.workOrder.status.trim().toLowerCase();
-    return isManager && (status == 'signed' || status == 'signed_edited');
+    final formStatus = _workOrderForm.status.trim().toLowerCase();
+    return _hasManagerRole &&
+        (formStatus == 'signed' || formStatus == 'signed_edited');
   }
 
   List<FormTemplateField> get _editableFields {
@@ -455,6 +471,15 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
     });
   }
 
+  Future<void> _regenerateEditedReportPdf() async {
+    final message = await ApiController.regenerateWorkOrderFormPdf(
+      widget.workOrder.id,
+    );
+    if (message.trim().toLowerCase().startsWith('failed')) {
+      throw Exception('Report saved, but PDF regeneration failed: $message');
+    }
+  }
+
   Future<void> _saveDraft() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
@@ -499,6 +524,9 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
               widget.workOrder.id,
               dataJson: dataJson,
             );
+      if (_isCompletedEditMode) {
+        await _regenerateEditedReportPdf();
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -571,6 +599,7 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
         dataJson: _buildDataJson(),
         reason: reason,
       );
+      await _regenerateEditedReportPdf();
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -613,6 +642,15 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
     return items;
   }
 
+  String _formatRemarkDateTime(String value) {
+    final parsed = DateTime.tryParse(value.trim());
+    if (parsed == null) return value.trim();
+    final local = parsed.toLocal();
+    String twoDigits(int number) => number.toString().padLeft(2, '0');
+    return '${local.year}-${twoDigits(local.month)}-${twoDigits(local.day)} '
+        '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
+  }
+
   Widget _buildFieldRemarks(String fieldKey) {
     final remarks = _remarksForField(fieldKey);
     if (remarks.isEmpty) return const SizedBox.shrink();
@@ -620,27 +658,123 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       padding: const EdgeInsets.only(top: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: remarks
-            .map(
-              (item) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  '${item.createdByName.trim().isEmpty ? 'Manager' : item.createdByName.trim()}: ${item.remark.trim()}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF64748B),
+        children: remarks.map((item) {
+          final isMutating = _remarkMutatingIds.contains(item.id);
+          final creatorName = item.createdByName.trim().isEmpty
+              ? 'Manager'
+              : item.createdByName.trim();
+          final updatedByName = item.updatedByName.trim().isEmpty
+              ? 'Manager'
+              : item.updatedByName.trim();
+          return Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.remark.trim(),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF334155),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Added by $creatorName'
+                        '${item.createdAt.trim().isEmpty ? '' : ' on ${_formatRemarkDateTime(item.createdAt)}'}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
+                      if (item.updatedAt.trim().isNotEmpty)
+                        Text(
+                          'Edited by $updatedByName on '
+                          '${_formatRemarkDateTime(item.updatedAt)}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-              ),
-            )
-            .toList(),
+                if (_hasManagerRole)
+                  isMutating
+                      ? const Padding(
+                          padding: EdgeInsets.all(8),
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              onPressed: () => _editRemark(item),
+                              tooltip: 'Edit remark',
+                              icon: const Icon(Icons.edit_outlined, size: 18),
+                            ),
+                            IconButton(
+                              onPressed: () => _deleteRemark(item),
+                              tooltip: 'Delete remark',
+                              icon: const Icon(Icons.delete_outline, size: 18),
+                            ),
+                          ],
+                        ),
+              ],
+            ),
+          );
+        }).toList(),
       ),
     );
   }
 
+  WorkOrderFormRemarkMutationResult _requireRemarkMutationSuccess(
+    WorkOrderFormRemarkMutationResult result,
+  ) {
+    if (!result.isSuccess) {
+      throw Exception(
+        result.message.trim().isEmpty
+            ? 'Remark request failed.'
+            : result.message.trim(),
+      );
+    }
+    return result;
+  }
+
+  Future<void> _finishRemarkMutation(
+    WorkOrderFormRemarkMutationResult result,
+    String fallbackMessage,
+  ) async {
+    _requireRemarkMutationSuccess(result);
+    await _reloadFormDataOnly();
+    final pdfMessage = await ApiController.regenerateWorkOrderFormPdf(
+      widget.workOrder.id,
+    );
+    if (pdfMessage.trim().toLowerCase().startsWith('failed')) {
+      throw Exception(
+        '${result.message.trim().isEmpty ? fallbackMessage : result.message.trim()}, '
+        'but PDF regeneration failed: $pdfMessage',
+      );
+    }
+  }
+
   Future<void> _addRemark(FormTemplateField field) async {
     final controller = TextEditingController();
-    final reasonController = TextEditingController();
     final formKey = GlobalKey<FormState>();
     bool submitting = false;
 
@@ -654,20 +788,25 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
               setDialogState(() => submitting = true);
               setState(() => _remarkSubmittingKeys.add(field.key));
               try {
-                final message = await ApiController.addWorkOrderFormRemark(
+                final result = await ApiController.addWorkOrderFormRemark(
                   widget.workOrder.id,
                   fieldKey: field.key,
                   remark: controller.text.trim(),
-                  reason: reasonController.text.trim(),
                 );
+                await _finishRemarkMutation(result, 'Remark added.');
                 if (!mounted) return;
                 if (dialogContext.mounted) {
                   Navigator.of(dialogContext).pop();
                 }
-                ScaffoldMessenger.of(
-                  this.context,
-                ).showSnackBar(SnackBar(content: Text(message)));
-                await _reloadFormDataOnly();
+                ScaffoldMessenger.of(this.context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      result.message.trim().isEmpty
+                          ? 'Remark added.'
+                          : result.message.trim(),
+                    ),
+                  ),
+                );
               } catch (e) {
                 if (!mounted) return;
                 ScaffoldMessenger.of(
@@ -704,21 +843,6 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
                         return null;
                       },
                     ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: reasonController,
-                      maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: 'Reason',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Required';
-                        }
-                        return null;
-                      },
-                    ),
                   ],
                 ),
               ),
@@ -746,7 +870,151 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
       },
     );
     controller.dispose();
-    reasonController.dispose();
+  }
+
+  Future<void> _editRemark(WorkOrderFormFieldRemarkItem item) async {
+    if (!_hasManagerRole || item.id.trim().isEmpty) return;
+    final controller = TextEditingController(text: item.remark);
+    final formKey = GlobalKey<FormState>();
+    bool submitting = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> submit() async {
+              if (!formKey.currentState!.validate()) return;
+              setDialogState(() => submitting = true);
+              setState(() => _remarkMutatingIds.add(item.id));
+              try {
+                final result = await ApiController.updateWorkOrderFormRemark(
+                  widget.workOrder.id,
+                  item.id,
+                  remark: controller.text.trim(),
+                );
+                await _finishRemarkMutation(result, 'Remark updated.');
+                if (!mounted) return;
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
+                ScaffoldMessenger.of(this.context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      result.message.trim().isEmpty
+                          ? 'Remark updated.'
+                          : result.message.trim(),
+                    ),
+                  ),
+                );
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(
+                  this.context,
+                ).showSnackBar(SnackBar(content: Text('$e')));
+                if (dialogContext.mounted) {
+                  setDialogState(() => submitting = false);
+                }
+              } finally {
+                if (mounted) {
+                  setState(() => _remarkMutatingIds.remove(item.id));
+                }
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Edit remark'),
+              content: Form(
+                key: formKey,
+                child: TextFormField(
+                  controller: controller,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    labelText: 'Remark',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Required';
+                    }
+                    return null;
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: submitting
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: submitting ? null : submit,
+                  child: submitting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    controller.dispose();
+  }
+
+  Future<void> _deleteRemark(WorkOrderFormFieldRemarkItem item) async {
+    if (!_hasManagerRole || item.id.trim().isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete remark?'),
+        content: const Text(
+          'This remark will be removed from the report. This action cannot be undone in the app.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _remarkMutatingIds.add(item.id));
+    try {
+      final result = await ApiController.deleteWorkOrderFormRemark(
+        widget.workOrder.id,
+        item.id,
+      );
+      await _finishRemarkMutation(result, 'Remark deleted.');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.message.trim().isEmpty
+                ? 'Remark deleted.'
+                : result.message.trim(),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      if (mounted) {
+        setState(() => _remarkMutatingIds.remove(item.id));
+      }
+    }
   }
 
   Widget _buildFieldContainer(FormTemplateField field, Widget child) {
@@ -760,19 +1028,20 @@ class _WorkOrderReportFormPageState extends State<WorkOrderReportFormPage> {
         child,
         _buildFieldRemarks(field.key),
         const SizedBox(height: 6),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton(
-            onPressed: isSubmittingRemark ? null : () => _addRemark(field),
-            child: isSubmittingRemark
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Add remark'),
+        if (_hasManagerRole)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: isSubmittingRemark ? null : () => _addRemark(field),
+              child: isSubmittingRemark
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Add remark'),
+            ),
           ),
-        ),
       ],
     );
   }

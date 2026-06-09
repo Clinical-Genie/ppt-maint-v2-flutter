@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:maintapp/api/api_controller.dart';
 import 'package:maintapp/model/admin_result.dart';
 import 'package:maintapp/model/api_result.dart';
+import 'package:maintapp/model/email_batch.dart';
 import 'package:maintapp/model/user_info.dart';
 import 'package:maintapp/model/work_order.dart';
-import 'package:maintapp/pages/email_batch_detail_page.dart';
+import 'package:maintapp/pages/email_batch_compose_page.dart';
 import 'package:maintapp/pages/shared/app_drawer.dart';
 import 'package:maintapp/pages/transfer_request_list_page.dart';
 import 'package:maintapp/pages/work_order_detail_page.dart';
@@ -56,12 +57,22 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
   int _currentPage = 1;
   int _totalItems = 0;
   int _currentOffset = 0;
+  String _emailSentFilter = 'not_sent';
+  EmailBatchConfig _emailBatchConfig = EmailBatchConfig();
+  final Set<String> _selectedEmailWorkOrderIds = {};
 
   @override
   void initState() {
     super.initState();
     _loadUsers();
+    _loadEmailBatchConfig();
     _loadWorkOrders();
+  }
+
+  Future<void> _loadEmailBatchConfig() async {
+    final config = await ApiController.getEmailBatchConfig();
+    if (!mounted) return;
+    setState(() => _emailBatchConfig = config);
   }
 
   @override
@@ -188,6 +199,10 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
 
     final effectiveStatuses = _effectiveStatusesForQuery;
     final statusFilter = effectiveStatuses.join(',');
+    final isEmailGroup = _selectedGroup == 'need_send_email';
+    final emailSent = !isEmailGroup || _emailSentFilter == 'both'
+        ? null
+        : _emailSentFilter == 'sent';
     if (_haOutboundRange != null) {
       final start = _haOutboundRange!.start;
       final end = _haOutboundRange!.end;
@@ -221,6 +236,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         ownerUserId: ownerFilter,
         plannedDate: plannedDateFilter,
         status: statusFilter.isEmpty ? null : statusFilter,
+        emailSent: emailSent,
         woNo: _woNoSearchController.text.trim().isEmpty
             ? null
             : _woNoSearchController.text.trim(),
@@ -238,6 +254,10 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         _items
           ..clear()
           ..addAll(payload.items);
+        final visibleIds = payload.items.map((item) => item.id).toSet();
+        _selectedEmailWorkOrderIds.removeWhere(
+          (id) => !visibleIds.contains(id),
+        );
         _totalItems = payload.total;
         _currentOffset = payload.offset;
       });
@@ -293,9 +313,6 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
   bool get _hasEngineerRole =>
       _hasRole(LoginSessionController.instance.userInfo, 'ENGINEER');
 
-  bool get _hasManagerRole =>
-      _hasRole(LoginSessionController.instance.userInfo, 'MANAGER');
-
   bool get _usesEngineerPools => _hasEngineerRole;
 
   bool get _isPublicPool => _selectedPool == 'public_pool';
@@ -331,7 +348,13 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         case 'need_sign':
           return const ['completed'];
         case 'ended':
-          return const ['signed', 'signed_edited', 'approved', 'email_sent'];
+          return const [
+            'need_approve',
+            'approved',
+            'email_sent',
+            // Legacy work-order statuses kept only for old rows.
+            'signed',
+          ];
         case 'all':
         default:
           return const [
@@ -341,10 +364,11 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
             'completed',
             'cannot_completed',
             'rejected',
-            'signed',
-            'signed_edited',
+            'need_approve',
             'approved',
             'email_sent',
+            // Legacy work-order statuses kept only for old rows.
+            'signed',
           ];
       }
     }
@@ -355,8 +379,16 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       case 'working':
         return const ['working', 'completed'];
       case 'need_approve':
-        return const ['signed', 'signed_edited'];
+        return const [
+          'need_approve',
+          // Legacy work-order statuses kept only for old rows.
+          'signed',
+        ];
       case 'need_send_email':
+        if (_emailSentFilter == 'sent') return const ['email_sent'];
+        if (_emailSentFilter == 'both') {
+          return const ['approved', 'email_sent'];
+        }
         return const ['approved'];
       case 'ended':
         return const ['email_sent'];
@@ -369,10 +401,11 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
           'completed',
           'cannot_completed',
           'rejected',
-          'signed',
-          'signed_edited',
+          'need_approve',
           'approved',
           'email_sent',
+          // Legacy work-order statuses kept only for old rows.
+          'signed',
         ];
     }
   }
@@ -428,7 +461,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       ('working', 'Working'),
       ('need_approve', 'Need approve'),
       ('need_send_email', 'Need send email'),
-      ('ended', 'Ended'),
+      // ('ended', 'Ended'),
       ('all', 'All'),
     ];
   }
@@ -511,6 +544,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       _selectedGroup = _defaultGroupForPool(value);
       _selectedEngineerId = null;
       _selectedStatuses = [];
+      _selectedEmailWorkOrderIds.clear();
       _plannedDateFilter = null;
       _currentPage = 1;
     });
@@ -522,12 +556,53 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     setState(() {
       _selectedGroup = value;
       _selectedStatuses = [];
+      _selectedEmailWorkOrderIds.clear();
       if (!_showPlannedDate) {
         _plannedDateFilter = null;
       }
       _currentPage = 1;
     });
     _loadWorkOrders();
+  }
+
+  bool get _isEmailSelectionMode => _selectedGroup == 'need_send_email';
+
+  void _toggleEmailSelection(WorkOrder item, bool selected) {
+    final max = _emailBatchConfig.maxWorkOrders;
+    setState(() {
+      if (selected) {
+        if (max <= 0 || _selectedEmailWorkOrderIds.length < max) {
+          _selectedEmailWorkOrderIds.add(item.id);
+        }
+      } else {
+        _selectedEmailWorkOrderIds.remove(item.id);
+      }
+    });
+  }
+
+  void _selectAllFilteredItems() {
+    final max = _emailBatchConfig.maxWorkOrders;
+    final ids = _items.map((item) => item.id);
+    setState(() {
+      _selectedEmailWorkOrderIds.clear();
+      _selectedEmailWorkOrderIds.addAll(max > 0 ? ids.take(max) : ids);
+    });
+  }
+
+  Future<void> _sendSelectedWorkOrders() async {
+    final selected = _items
+        .where((item) => _selectedEmailWorkOrderIds.contains(item.id))
+        .toList();
+    if (selected.isEmpty) return;
+    final sent = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => EmailBatchComposePage(workOrders: selected),
+      ),
+    );
+    if (sent == true && mounted) {
+      setState(() => _selectedEmailWorkOrderIds.clear());
+      await _loadWorkOrders();
+    }
   }
 
   void _onEngineerChanged(String? engineerId) {
@@ -740,6 +815,52 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
               label: const Text('Next'),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmailSelectionBar() {
+    if (!_isEmailSelectionMode) return const SizedBox.shrink();
+    final selectedCount = _selectedEmailWorkOrderIds.length;
+    final attachmentsSupported = _emailBatchConfig.attachmentsSupported;
+    return Material(
+      color: Colors.white,
+      elevation: 3,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text('$selectedCount selected'),
+              OutlinedButton(
+                onPressed: _items.isEmpty ? null : _selectAllFilteredItems,
+                child: const Text('Select All'),
+              ),
+              TextButton(
+                onPressed: selectedCount == 0
+                    ? null
+                    : () => setState(() => _selectedEmailWorkOrderIds.clear()),
+                child: const Text('Clear'),
+              ),
+              FilledButton.icon(
+                onPressed: selectedCount == 0 || !attachmentsSupported
+                    ? null
+                    : _sendSelectedWorkOrders,
+                icon: const Icon(Icons.send_outlined),
+                label: Text('Send Selected ($selectedCount)'),
+              ),
+              if (!attachmentsSupported)
+                const Text(
+                  'Attachments are not supported by the mail provider.',
+                  style: TextStyle(color: Color(0xFFB91C1C)),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -1193,12 +1314,15 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     return (plannedDate: pickedDate, plannedHalfDay: pickedHalfDay);
   }
 
-  void _viewDetails(WorkOrder order, BuildContext rowContext) {
-    Navigator.of(rowContext).push(
+  Future<void> _viewDetails(WorkOrder order, BuildContext rowContext) async {
+    final changed = await Navigator.of(rowContext).push<bool>(
       MaterialPageRoute(
         builder: (_) => WorkOrderDetailPage(workOrderId: order.id),
       ),
     );
+    if (changed == true && mounted) {
+      await _loadWorkOrders();
+    }
   }
 
   Future<void> _runAction(
@@ -1212,11 +1336,12 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       String feedback;
       final user = LoginSessionController.instance.userInfo;
       if (action == 'view_details') {
-        await navigator.push(
+        final changed = await navigator.push<bool>(
           MaterialPageRoute(
             builder: (_) => WorkOrderDetailPage(workOrderId: order.id),
           ),
         );
+        if (changed == true && mounted) await _loadWorkOrders();
         return;
       } else if (action == 'open_incoming_transfers') {
         await navigator.push(
@@ -1235,14 +1360,30 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         );
         return;
       } else if (action == 'create_email_draft') {
-        await _createEmailDraftForWorkOrder(order, rowContext);
+        final sent = await navigator.push<bool>(
+          MaterialPageRoute(
+            builder: (_) => EmailBatchComposePage(workOrders: [order]),
+          ),
+        );
+        if (sent == true && mounted) {
+          await _loadWorkOrders();
+        }
         return;
       } else if (action == 'view_report') {
-        await navigator.push(
+        final changed = await navigator.push<bool>(
           MaterialPageRoute(
             builder: (_) => WorkOrderDetailPage(workOrderId: order.id),
           ),
         );
+        if (changed == true && mounted) await _loadWorkOrders();
+        return;
+      } else if (action == 'review') {
+        final changed = await navigator.push<bool>(
+          MaterialPageRoute(
+            builder: (_) => WorkOrderDetailPage(workOrderId: order.id),
+          ),
+        );
+        if (changed == true && mounted) await _loadWorkOrders();
         return;
       } else if (action == 'add_remarks') {
         await navigator.push<bool>(
@@ -1254,11 +1395,12 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         await _loadWorkOrders();
         return;
       } else if (action == 'send_email') {
-        scaffoldMessenger.showSnackBar(
-          const SnackBar(
-            content: Text('Multiple-select Send Email is not wired yet.'),
+        final sent = await navigator.push<bool>(
+          MaterialPageRoute(
+            builder: (_) => EmailBatchComposePage(workOrders: [order]),
           ),
         );
+        if (sent == true && mounted) await _loadWorkOrders();
         return;
       } else if (action == 'edit') {
         scaffoldMessenger.showSnackBar(
@@ -1448,19 +1590,29 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
             child: Text('Return to public pool'),
           ),
         );
-      } else if (normalizedStatus == 'signed' ||
-          normalizedStatus == 'signed_edited') {
+      } else if (normalizedStatus == 'need_approve' ||
+          normalizedStatus == 'signed') {
         items.add(
-          const PopupMenuItem(value: 'view_report', child: Text('View Report')),
+          normalizedStatus == 'need_approve'
+              ? const PopupMenuItem(value: 'review', child: Text('Review'))
+              : const PopupMenuItem(
+                  value: 'view_report',
+                  child: Text('View Report'),
+                ),
         );
         items.add(
           const PopupMenuItem(value: 'edit_report', child: Text('Edit Report')),
         );
-        items.add(
-          const PopupMenuItem(value: 'add_remarks', child: Text('Add remarks')),
-        );
-        items.add(const PopupMenuItem(value: 'approve', child: Text('Accept')));
-        items.add(const PopupMenuItem(value: 'reject', child: Text('Reject')));
+        if (normalizedStatus != 'need_approve') {
+          items.add(
+            const PopupMenuItem(
+              value: 'add_remarks',
+              child: Text('Add remarks'),
+            ),
+          );
+        }
+        // items.add(const PopupMenuItem(value: 'approve', child: Text('Accept')));
+        // items.add(const PopupMenuItem(value: 'reject', child: Text('Reject')));
       } else if (normalizedStatus == 'approved') {
         items.add(
           const PopupMenuItem(value: 'send_email', child: Text('Send email')),
@@ -1583,123 +1735,6 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
     return 'Done';
   }
 
-  Future<void> _createEmailDraftForWorkOrder(
-    WorkOrder order,
-    BuildContext context,
-  ) async {
-    final toEmailsController = TextEditingController();
-    final subjectController = TextEditingController(
-      text: order.woNo.isEmpty ? 'Work order batch' : 'WO ${order.woNo}',
-    );
-    final bodyTextController = TextEditingController();
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        bool creating = false;
-        return StatefulBuilder(
-          builder: (context, setStateDialog) {
-            return AlertDialog(
-              title: Text('Create Email Draft for ${order.referenceNumber}'),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: toEmailsController,
-                      maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: 'Recipients',
-                        hintText: 'Comma-separated emails',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: subjectController,
-                      decoration: const InputDecoration(
-                        labelText: 'Subject',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: bodyTextController,
-                      maxLines: 4,
-                      decoration: const InputDecoration(
-                        labelText: 'Body',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: creating
-                      ? null
-                      : () async {
-                          final emails = toEmailsController.text
-                              .split(',')
-                              .map((item) => item.trim())
-                              .where((item) => item.isNotEmpty)
-                              .toList();
-                          if (emails.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'At least one recipient is required.',
-                                ),
-                              ),
-                            );
-                            return;
-                          }
-                          setStateDialog(() => creating = true);
-                          try {
-                            final created =
-                                await ApiController.createEmailBatch(
-                                  workOrderIds: [order.id],
-                                  toEmails: emails,
-                                  subject: subjectController.text.trim(),
-                                  bodyText: bodyTextController.text.trim(),
-                                );
-                            if (!mounted) return;
-                            if (dialogContext.mounted) {
-                              Navigator.of(dialogContext).pop();
-                            }
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => EmailBatchDetailPage(
-                                  batchId: created.emailBatchId,
-                                ),
-                              ),
-                            );
-                          } catch (e) {
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(
-                              context,
-                            ).showSnackBar(SnackBar(content: Text('$e')));
-                          } finally {
-                            if (dialogContext.mounted) {
-                              setStateDialog(() => creating = false);
-                            }
-                          }
-                        },
-                  child: const Text('Create Draft'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
   Widget _buildStatusChip(WorkOrder order) {
     final status = order.status.trim();
     final normalized = status.toLowerCase();
@@ -1725,7 +1760,15 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       backgroundColor = const Color(0xFFDBEAFE);
       borderColor = const Color(0xFFBFDBFE);
       textColor = const Color(0xFF1D4ED8);
-    } else if (normalized == 'completed' || normalized == 'signed_edited') {
+    } else if (normalized == 'need_approve') {
+      backgroundColor = const Color(0xFFFEF3C7);
+      borderColor = const Color(0xFFFDE68A);
+      textColor = const Color(0xFF92400E);
+    } else if (normalized == 'approved' || normalized == 'email_sent') {
+      backgroundColor = const Color(0xFFE0F2FE);
+      borderColor = const Color(0xFFBAE6FD);
+      textColor = const Color(0xFF075985);
+    } else if (normalized == 'completed' || normalized == 'signed') {
       backgroundColor = const Color(0xFFDCFCE7);
       borderColor = const Color(0xFFBBF7D0);
       textColor = const Color(0xFF166534);
@@ -1760,7 +1803,11 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         normalized == 'in_progress' ||
         normalized == 'planned') {
       textColor = const Color(0xFF1D4ED8);
-    } else if (normalized == 'completed' || normalized == 'signed_edited') {
+    } else if (normalized == 'need_approve') {
+      textColor = const Color(0xFF92400E);
+    } else if (normalized == 'approved' || normalized == 'email_sent') {
+      textColor = const Color(0xFF075985);
+    } else if (normalized == 'completed' || normalized == 'signed') {
       textColor = const Color(0xFF166534);
     }
 
@@ -1876,6 +1923,12 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (_isEmailSelectionMode)
+                  Checkbox(
+                    value: _selectedEmailWorkOrderIds.contains(item.id),
+                    onChanged: (value) =>
+                        _toggleEmailSelection(item, value ?? false),
+                  ),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2161,6 +2214,13 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
+                if (_isEmailSelectionMode)
+                  Checkbox(
+                    value: _selectedEmailWorkOrderIds.contains(item.id),
+                    onChanged: (value) =>
+                        _toggleEmailSelection(item, value ?? false),
+                    visualDensity: VisualDensity.compact,
+                  ),
                 if (hasWorkOrderIndicators) ...[
                   workOrderIcons,
                   const SizedBox(width: 6),
@@ -2829,6 +2889,34 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
         ],
         const SizedBox(height: 16),
         _buildInstitutionAutocomplete(double.infinity),
+        if (_isEmailSelectionMode) ...[
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _emailSentFilter,
+            decoration: const InputDecoration(
+              labelText: 'Email Status',
+              border: OutlineInputBorder(),
+            ),
+            items: const [
+              DropdownMenuItem(
+                value: 'not_sent',
+                child: Text('Email not Sent'),
+              ),
+              DropdownMenuItem(value: 'sent', child: Text('Email is Sent')),
+              DropdownMenuItem(value: 'both', child: Text('Both')),
+            ],
+            onChanged: (value) {
+              if (value == null || value == _emailSentFilter) return;
+              setState(() {
+                _emailSentFilter = value;
+                _selectedStatuses = [];
+                _selectedEmailWorkOrderIds.clear();
+                _currentPage = 1;
+              });
+              _loadWorkOrders();
+            },
+          ),
+        ],
         if (_showStatusFilter) ...[
           const SizedBox(height: 12),
           _buildStatusField(double.infinity),
@@ -3249,6 +3337,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                           bottomContentPadding: bottomContentPadding,
                         ),
                       ),
+                      _buildEmailSelectionBar(),
                       _buildPaginationBar(hasFloatingButton: hasManagerRole),
                     ],
                   ),
@@ -3346,6 +3435,7 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
                     bottomContentPadding: bottomContentPadding,
                   ),
                 ),
+                _buildEmailSelectionBar(),
                 _buildPaginationBar(hasFloatingButton: hasManagerRole),
               ],
             ),

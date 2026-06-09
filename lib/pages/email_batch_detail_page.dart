@@ -50,9 +50,7 @@ class _EmailBatchDetailPageState extends State<EmailBatchDetailPage> {
       await _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('$e')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     } finally {
       if (mounted) {
         setState(() => _isSending = false);
@@ -88,7 +86,10 @@ class _EmailBatchDetailPageState extends State<EmailBatchDetailPage> {
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+      ),
       child: Text(
         status,
         style: TextStyle(color: fg, fontWeight: FontWeight.w700),
@@ -126,14 +127,18 @@ class _EmailBatchDetailPageState extends State<EmailBatchDetailPage> {
                   children: [
                     Expanded(
                       child: Text(
-                        _detail.subject.isEmpty ? 'No subject' : _detail.subject,
+                        _detail.subject.isEmpty
+                            ? 'No subject'
+                            : _detail.subject,
                         style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
                     ),
-                    _batchStatusBadge(_detail.status.isEmpty ? '-' : _detail.status),
+                    _batchStatusBadge(
+                      _detail.status.isEmpty ? '-' : _detail.status,
+                    ),
                   ],
                 ),
                 const SizedBox(height: 10),
@@ -142,6 +147,10 @@ class _EmailBatchDetailPageState extends State<EmailBatchDetailPage> {
                 SelectableText(
                   'Recipients: ${_detail.toEmails.isEmpty ? '-' : _detail.toEmails.join(', ')}',
                 ),
+                if (_detail.ccEmails.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  SelectableText('CC: ${_detail.ccEmails.join(', ')}'),
+                ],
                 const SizedBox(height: 4),
                 Text('Updated: ${_formatDateTime(_detail.updatedAt)}'),
                 const SizedBox(height: 4),
@@ -152,6 +161,22 @@ class _EmailBatchDetailPageState extends State<EmailBatchDetailPage> {
                     'Error: ${_detail.error}',
                     style: const TextStyle(color: Color(0xFFB91C1C)),
                   ),
+                ],
+                if (_detail.bodyHtml.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Body (HTML)',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  SelectableText(_detail.bodyHtml),
+                ],
+                if (_detail.bodyText.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Body (Text)',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  SelectableText(_detail.bodyText),
                 ],
                 const SizedBox(height: 14),
                 if (canSend)
@@ -172,11 +197,15 @@ class _EmailBatchDetailPageState extends State<EmailBatchDetailPage> {
                 ..._detail.workOrders.map((item) {
                   return Card(
                     child: ListTile(
-                      title: Text(item.woNo.isEmpty ? item.workOrderId : item.woNo),
+                      title: Text(
+                        item.woNo.isEmpty ? item.workOrderId : item.woNo,
+                      ),
                       subtitle: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Status: ${item.status.isEmpty ? '-' : item.status}'),
+                          Text(
+                            'Status: ${item.status.isEmpty ? '-' : item.status}',
+                          ),
                           Text('Sent at: ${_formatDateTime(item.sentAt)}'),
                           if (item.error.isNotEmpty)
                             Text(

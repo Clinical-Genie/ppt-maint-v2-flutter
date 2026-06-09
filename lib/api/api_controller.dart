@@ -15,6 +15,8 @@ import 'package:maintapp/model/admin_email_log.dart';
 import 'package:maintapp/model/admin_result.dart';
 import 'package:maintapp/model/api_result.dart';
 import 'package:maintapp/model/email_batch.dart';
+import 'package:maintapp/model/email_contact.dart';
+import 'package:maintapp/model/email_template.dart';
 import 'package:maintapp/model/form_template.dart';
 import 'package:maintapp/model/form_template_choice_group.dart';
 import 'package:maintapp/model/user_status_result.dart';
@@ -170,6 +172,8 @@ class ApiPaths {
       '/api/work-orders/$workOrderId/form/admin-edit';
   static String remarkWorkOrderForm(String workOrderId) =>
       '/api/work-orders/$workOrderId/form/remark';
+  static String workOrderFormRemarkById(String workOrderId, String remarkId) =>
+      '/api/work-orders/$workOrderId/form/remarks/$remarkId';
   static String regenerateWorkOrderFormPdf(String workOrderId) =>
       '/api/work-orders/$workOrderId/form/regenerate-pdf';
   static String mergeWorkOrderPdf(String workOrderId) =>
@@ -200,6 +204,11 @@ class ApiPaths {
   static String startWorkOrder(String workOrderId) =>
       '/api/work-orders/$workOrderId/start-work';
   static const String emailBatches = '/api/email-batches';
+  static const String emailBatchConfig = '/api/email-batches/config';
+  static const String emailTemplates = '/api/email-templates';
+  static String emailTemplateById(String id) => '/api/email-templates/$id';
+  static const String emailContacts = '/api/email-contacts';
+  static String emailContactById(String id) => '/api/email-contacts/$id';
   static const String formTemplates = '/api/form-templates';
   static String formTemplateById(String templateId) =>
       '/api/form-templates/$templateId';
@@ -1676,6 +1685,7 @@ class ApiController {
   static Future<EmailBatchCreateResult> createEmailBatch({
     required List<String> workOrderIds,
     required List<String> toEmails,
+    List<String> ccEmails = const [],
     String? subject,
     String? bodyHtml,
     String? bodyText,
@@ -1687,6 +1697,7 @@ class ApiController {
       postParameters: {
         'work_order_ids': workOrderIds,
         'to_emails': toEmails,
+        'cc_emails': ccEmails,
         if (subject != null && subject.isNotEmpty) 'subject': subject,
         if (bodyHtml != null && bodyHtml.isNotEmpty) 'body_html': bodyHtml,
         if (bodyText != null && bodyText.isNotEmpty) 'body_text': bodyText,
@@ -1694,6 +1705,136 @@ class ApiController {
       successStatusCodes: const [201],
     );
     return EmailBatchCreateResult.fromJson(result);
+  }
+
+  static Future<EmailBatchConfig> getEmailBatchConfig() async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'getEmailBatchConfig',
+      subPath: ApiPaths.emailBatchConfig,
+      method: 'get',
+      postParameters: const {},
+    );
+    return EmailBatchConfig.fromJson(result);
+  }
+
+  static Future<EmailTemplateList> listEmailTemplates({String? q}) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'listEmailTemplates',
+      subPath: ApiPaths.emailTemplates,
+      method: 'get',
+      postParameters: const {},
+      queryParameters: {if (q != null && q.trim().isNotEmpty) 'q': q.trim()},
+    );
+    return EmailTemplateList.fromJson(result);
+  }
+
+  static Future<EmailTemplate> getEmailTemplate(String id) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'getEmailTemplate',
+      subPath: ApiPaths.emailTemplateById(id),
+      method: 'get',
+      postParameters: const {},
+    );
+    return EmailTemplate.fromJson(result);
+  }
+
+  static Future<EmailTemplate> saveEmailTemplate({
+    String? id,
+    required String name,
+    required String subject,
+    required String bodyHtml,
+    String? bodyText,
+    bool isActive = true,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: id == null ? 'createEmailTemplate' : 'updateEmailTemplate',
+      subPath: id == null
+          ? ApiPaths.emailTemplates
+          : ApiPaths.emailTemplateById(id),
+      method: id == null ? 'post' : 'patch',
+      postParameters: {
+        'name': name,
+        'subject': subject,
+        'body_html': bodyHtml,
+        'body_text': bodyText,
+        'is_active': isActive,
+      },
+      successStatusCodes: const [200, 201],
+    );
+    return EmailTemplate.fromJson(result);
+  }
+
+  static Future<String> deactivateEmailTemplate(String id) {
+    return _callMessage(
+      apiNameForLog: 'deactivateEmailTemplate',
+      subPath: ApiPaths.emailTemplateById(id),
+      method: 'delete',
+      postParameters: const {},
+      fallbackMessage: 'Email template deactivated.',
+    );
+  }
+
+  static Future<EmailContactList> listEmailContacts({
+    String? q,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'listEmailContacts',
+      subPath: ApiPaths.emailContacts,
+      method: 'get',
+      postParameters: const {},
+      queryParameters: {
+        if (q != null && q.trim().isNotEmpty) 'q': q.trim(),
+        'limit': limit,
+        'offset': offset,
+      },
+    );
+    return EmailContactList.fromJson(result);
+  }
+
+  static Future<EmailContact> getEmailContact(String id) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'getEmailContact',
+      subPath: ApiPaths.emailContactById(id),
+      method: 'get',
+      postParameters: const {},
+    );
+    return EmailContact.fromJson(result);
+  }
+
+  static Future<EmailContact> saveEmailContact({
+    String? id,
+    required String name,
+    required String email,
+    required String notes,
+    bool isActive = true,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: id == null ? 'createEmailContact' : 'updateEmailContact',
+      subPath: id == null
+          ? ApiPaths.emailContacts
+          : ApiPaths.emailContactById(id),
+      method: id == null ? 'post' : 'patch',
+      postParameters: {
+        'name': name,
+        'email': email,
+        'notes': notes,
+        'is_active': isActive,
+      },
+      successStatusCodes: const [200, 201],
+    );
+    return EmailContact.fromJson(result);
+  }
+
+  static Future<String> deactivateEmailContact(String id) {
+    return _callMessage(
+      apiNameForLog: 'deactivateEmailContact',
+      subPath: ApiPaths.emailContactById(id),
+      method: 'delete',
+      postParameters: const {},
+      fallbackMessage: 'Email contact deactivated.',
+    );
   }
 
   static Future<EmailBatchListResult> listEmailBatches({
@@ -1901,23 +2042,55 @@ class ApiController {
     );
   }
 
-  static Future<String> addWorkOrderFormRemark(
+  static Future<WorkOrderFormRemarkMutationResult> addWorkOrderFormRemark(
     String workOrderId, {
     required String fieldKey,
     required String remark,
-    required String reason,
   }) async {
-    return _callMessage(
+    final result = await _callJsonMap(
       apiNameForLog: 'addWorkOrderFormRemark',
       subPath: ApiPaths.remarkWorkOrderForm(workOrderId),
       method: 'post',
-      postParameters: {
-        'field_key': fieldKey,
-        'remark': remark,
-        'reason': reason,
-      },
-      fallbackMessage: 'Remark added.',
+      postParameters: {'field_key': fieldKey, 'remark': remark},
     );
+    return _parseWorkOrderFormRemarkMutation(result);
+  }
+
+  static Future<WorkOrderFormRemarkMutationResult> updateWorkOrderFormRemark(
+    String workOrderId,
+    String remarkId, {
+    required String remark,
+  }) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'updateWorkOrderFormRemark',
+      subPath: ApiPaths.workOrderFormRemarkById(workOrderId, remarkId),
+      method: 'patch',
+      postParameters: {'remark': remark},
+    );
+    return _parseWorkOrderFormRemarkMutation(result);
+  }
+
+  static Future<WorkOrderFormRemarkMutationResult> deleteWorkOrderFormRemark(
+    String workOrderId,
+    String remarkId,
+  ) async {
+    final result = await _callJsonMap(
+      apiNameForLog: 'deleteWorkOrderFormRemark',
+      subPath: ApiPaths.workOrderFormRemarkById(workOrderId, remarkId),
+      method: 'delete',
+      postParameters: const {},
+    );
+    return _parseWorkOrderFormRemarkMutation(result);
+  }
+
+  static WorkOrderFormRemarkMutationResult _parseWorkOrderFormRemarkMutation(
+    Map<String, dynamic> payload,
+  ) {
+    final result = WorkOrderFormRemarkMutationResult.fromJson(payload);
+    if (!result.isSuccess && result.message.trim().isEmpty) {
+      result.message = _extractApiErrorMessage(payload);
+    }
+    return result;
   }
 
   static Future<String> regenerateWorkOrderFormPdf(String workOrderId) async {

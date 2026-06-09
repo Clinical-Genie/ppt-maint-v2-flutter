@@ -5,6 +5,7 @@ class EmailBatchSummary {
   String createdBy = '';
   String subject = '';
   List<String> toEmails = [];
+  List<String> ccEmails = [];
   String status = '';
   String provider = '';
   String providerMessageId = '';
@@ -20,6 +21,7 @@ class EmailBatchSummary {
     createdBy = DataHelper.getStringSafely(json, 'created_by', '');
     subject = DataHelper.getStringSafely(json, 'subject', '');
     toEmails = DataHelper.getListOfStringSafely(json, 'to_emails');
+    ccEmails = DataHelper.getListOfStringSafely(json, 'cc_emails');
     status = DataHelper.getStringSafely(json, 'status', '');
     provider = DataHelper.getStringSafely(json, 'provider', '');
     providerMessageId = DataHelper.getStringSafely(
@@ -31,6 +33,28 @@ class EmailBatchSummary {
     sentAt = DataHelper.getStringSafely(json, 'sent_at', '');
     createdAt = DataHelper.getStringSafely(json, 'created_at', '');
     updatedAt = DataHelper.getStringSafely(json, 'updated_at', '');
+  }
+}
+
+class EmailBatchConfig {
+  int maxWorkOrders = 0;
+  int maxToEmails = 0;
+  int maxCcEmails = 0;
+  String mailProvider = '';
+  bool attachmentsSupported = false;
+
+  EmailBatchConfig();
+
+  EmailBatchConfig.fromJson(Map<dynamic, dynamic> json) {
+    maxWorkOrders = DataHelper.getIntSafely(json, 'max_work_orders', 0);
+    maxToEmails = DataHelper.getIntSafely(json, 'max_to_emails', 0);
+    maxCcEmails = DataHelper.getIntSafely(json, 'max_cc_emails', 0);
+    mailProvider = DataHelper.getStringSafely(json, 'mail_provider', '');
+    attachmentsSupported = DataHelper.getBoolSafely(
+      json,
+      'attachments_supported',
+      false,
+    );
   }
 }
 
@@ -64,9 +88,10 @@ class EmailBatchDetail extends EmailBatchSummary {
   EmailBatchDetail.fromJson(Map<dynamic, dynamic> json) : super.fromJson(json) {
     bodyHtml = DataHelper.getStringSafely(json, 'body_html', '');
     bodyText = DataHelper.getStringSafely(json, 'body_text', '');
-    workOrders = DataHelper.getListOfMapSafely(json, 'work_orders')
-        .map((item) => EmailBatchWorkOrderItem.fromJson(item))
-        .toList();
+    workOrders = DataHelper.getListOfMapSafely(
+      json,
+      'work_orders',
+    ).map((item) => EmailBatchWorkOrderItem.fromJson(item)).toList();
   }
 }
 
@@ -79,9 +104,10 @@ class EmailBatchListResult {
   EmailBatchListResult();
 
   EmailBatchListResult.fromJson(Map<dynamic, dynamic> json) {
-    items = DataHelper.getListOfMapSafely(json, 'items')
-        .map((item) => EmailBatchSummary.fromJson(item))
-        .toList();
+    items = DataHelper.getListOfMapSafely(
+      json,
+      'items',
+    ).map((item) => EmailBatchSummary.fromJson(item)).toList();
     total = DataHelper.getIntSafely(json, 'total', items.length);
     limit = DataHelper.getIntSafely(json, 'limit', 0);
     offset = DataHelper.getIntSafely(json, 'offset', 0);
@@ -162,8 +188,9 @@ class WorkOrderEmailHistoryResult {
   WorkOrderEmailHistoryResult();
 
   WorkOrderEmailHistoryResult.fromJson(Map<dynamic, dynamic> json) {
-    items = DataHelper.getListOfMapSafely(json, 'items')
-        .map((item) => WorkOrderEmailHistoryItem.fromJson(item))
-        .toList();
+    items = DataHelper.getListOfMapSafely(
+      json,
+      'items',
+    ).map((item) => WorkOrderEmailHistoryItem.fromJson(item)).toList();
   }
 }

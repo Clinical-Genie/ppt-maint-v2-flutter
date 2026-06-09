@@ -369,13 +369,17 @@ class _TransferRequestListPageState extends State<TransferRequestListPage> {
               runSpacing: 8,
               children: [
                 OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.of(context).push(
+                  onPressed: () async {
+                    final navigator = Navigator.of(context);
+                    final changed = await navigator.push<bool>(
                       MaterialPageRoute(
                         builder: (_) =>
                             WorkOrderDetailPage(workOrderId: item.workOrderId),
                       ),
                     );
+                    if (changed == true) {
+                      navigator.pushReplacementNamed('/work-orders');
+                    }
                   },
                   icon: const Icon(Icons.open_in_new),
                   label: const Text('Open work order'),

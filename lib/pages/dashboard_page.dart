@@ -117,15 +117,15 @@ class _DashboardPageState extends State<DashboardPage> {
         status: 'completed',
         pageSize: 50,
       ).catchError((_) => WorkOrderList());
-      final signedEdited = await ApiController.listWorkOrders(
-        status: 'signed_edited',
+      final needApproval = await ApiController.listWorkOrders(
+        status: 'need_approve',
         pageSize: 50,
       ).catchError((_) => WorkOrderList());
 
       if (!mounted) return;
       setState(() {
         _reviewPendingSignature = pendingSignature;
-        _reviewSignedEdited = signedEdited;
+        _reviewSignedEdited = needApproval;
       });
     } finally {
       if (mounted) {
@@ -176,7 +176,7 @@ class _DashboardPageState extends State<DashboardPage> {
           pageSize: 1,
         ).catchError((_) => WorkOrderList());
         final pendingApproval = await ApiController.listWorkOrders(
-          status: 'signed,signed_edited',
+          status: 'need_approve',
           pageSize: 1,
         ).catchError((_) => WorkOrderList());
         managerOpenSource = await ApiController.listWorkOrders(

@@ -42,136 +42,6 @@ class _EmailBatchListPageState extends State<EmailBatchListPage> {
     }
   }
 
-  Future<void> _openCreateDraftDialog() async {
-    final workOrderIdsController = TextEditingController();
-    final toEmailsController = TextEditingController();
-    final subjectController = TextEditingController();
-    final bodyTextController = TextEditingController();
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        bool creating = false;
-        return StatefulBuilder(
-          builder: (context, setStateDialog) {
-            return AlertDialog(
-              title: const Text('Create Email Draft'),
-              content: SizedBox(
-                width: 480,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextField(
-                        controller: workOrderIdsController,
-                        maxLines: 3,
-                        decoration: const InputDecoration(
-                          labelText: 'Work Order IDs',
-                          hintText: 'Comma-separated UUIDs',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: toEmailsController,
-                        maxLines: 3,
-                        decoration: const InputDecoration(
-                          labelText: 'Recipients',
-                          hintText: 'Comma-separated emails',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: subjectController,
-                        decoration: const InputDecoration(
-                          labelText: 'Subject',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: bodyTextController,
-                        maxLines: 4,
-                        decoration: const InputDecoration(
-                          labelText: 'Body',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: creating
-                      ? null
-                      : () async {
-                          final ids = workOrderIdsController.text
-                              .split(',')
-                              .map((e) => e.trim())
-                              .where((e) => e.isNotEmpty)
-                              .toList();
-                          final emails = toEmailsController.text
-                              .split(',')
-                              .map((e) => e.trim())
-                              .where((e) => e.isNotEmpty)
-                              .toList();
-                          if (ids.isEmpty || emails.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Work order IDs and recipients are required.',
-                                ),
-                              ),
-                            );
-                            return;
-                          }
-                          setStateDialog(() => creating = true);
-                          try {
-                            final created = await ApiController.createEmailBatch(
-                              workOrderIds: ids,
-                              toEmails: emails,
-                              subject: subjectController.text.trim(),
-                              bodyText: bodyTextController.text.trim(),
-                            );
-                            if (!mounted) return;
-                            if (dialogContext.mounted) {
-                              Navigator.of(dialogContext).pop();
-                            }
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => EmailBatchDetailPage(
-                                  batchId: created.emailBatchId,
-                                ),
-                              ),
-                            );
-                            _load();
-                          } catch (e) {
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(
-                              context,
-                            ).showSnackBar(SnackBar(content: Text('$e')));
-                          } finally {
-                            if (dialogContext.mounted) {
-                              setStateDialog(() => creating = false);
-                            }
-                          }
-                        },
-                  child: const Text('Create Draft'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
   Widget _statusBadge(String status) {
     final normalized = status.toLowerCase();
     Color bg = const Color(0xFFE2E8F0);
@@ -191,7 +61,10 @@ class _EmailBatchListPageState extends State<EmailBatchListPage> {
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+      ),
       child: Text(
         status,
         style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: fg),
@@ -221,10 +94,10 @@ class _EmailBatchListPageState extends State<EmailBatchListPage> {
             child: DropdownButton<String>(
               value: _selectedStatus,
               items: _statuses
-                  .map((status) => DropdownMenuItem(
-                        value: status,
-                        child: Text(status),
-                      ))
+                  .map(
+                    (status) =>
+                        DropdownMenuItem(value: status, child: Text(status)),
+                  )
                   .toList(),
               onChanged: (value) {
                 if (value == null) return;
@@ -235,11 +108,6 @@ class _EmailBatchListPageState extends State<EmailBatchListPage> {
           ),
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
         ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _openCreateDraftDialog,
-        icon: const Icon(Icons.add),
-        label: const Text('Create Draft'),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -259,13 +127,19 @@ class _EmailBatchListPageState extends State<EmailBatchListPage> {
                         ),
                       );
                     },
-                    title: Text(item.subject.isEmpty ? 'No subject' : item.subject),
+                    title: Text(
+                      item.subject.isEmpty ? 'No subject' : item.subject,
+                    ),
                     subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          item.toEmails.isEmpty ? '-' : item.toEmails.join(', '),
+                          item.toEmails.isEmpty
+                              ? '-'
+                              : item.toEmails.join(', '),
                         ),
+                        if (item.ccEmails.isNotEmpty)
+                          Text('CC: ${item.ccEmails.join(', ')}'),
                         Text('Updated: ${_formatDateTime(item.updatedAt)}'),
                         if (item.error.isNotEmpty)
                           Text(

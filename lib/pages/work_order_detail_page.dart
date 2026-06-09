@@ -112,6 +112,29 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
     }
   }
 
+  Future<bool> _refreshOrLeaveIfStatusChanged(String previousStatus) async {
+    final latest = await ApiController.getWorkOrderById(widget.workOrderId);
+    if (!mounted) return true;
+    if (latest.id.trim().isEmpty) {
+      await _load();
+      return false;
+    }
+    final changed =
+        latest.status.trim().toLowerCase() !=
+        previousStatus.trim().toLowerCase();
+    if (changed) {
+      final navigator = Navigator.of(context);
+      if (navigator.canPop()) {
+        navigator.pop(true);
+      } else {
+        navigator.pushReplacementNamed('/work-orders');
+      }
+      return true;
+    }
+    await _load();
+    return false;
+  }
+
   Future<void> _reloadAttachmentAndHistory() async {
     if (!mounted) return;
     setState(() {
@@ -250,7 +273,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
   bool get _engineerOwnerCanAddAttachmentWithReason {
     return _hasEngineerRole &&
         _isMine(_workOrder) &&
-        _workOrder.status.trim().toLowerCase() == 'signed';
+        _workOrder.status.trim().toLowerCase() == 'need_approve';
   }
 
   bool get _canAddAttachment =>
@@ -268,7 +291,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
       'working',
       'cannot_completed',
       'completed',
-      'signed',
+      'need_approve',
     };
     return _hasEngineerRole &&
         _isMine(_workOrder) &&
@@ -311,6 +334,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
   }
 
   Future<void> _openTransferRequestDialog() async {
+    final previousStatus = _workOrder.status;
     final reasonController = TextEditingController();
     final isHandoff = _isCurrentEngineerOwner;
     final targets = isHandoff
@@ -435,7 +459,9 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
                                   ),
                                 ),
                               );
-                              await _load();
+                              await _refreshOrLeaveIfStatusChanged(
+                                previousStatus,
+                              );
                             } catch (e) {
                               if (!mounted) return;
                               ScaffoldMessenger.of(
@@ -891,17 +917,19 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
   }
 
   Future<void> _editWorkOrder() async {
+    final previousStatus = _workOrder.status;
     final updated = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => EditWorkOrderPage(workOrderId: widget.workOrderId),
       ),
     );
     if (updated == true && mounted) {
-      await _load();
+      await _refreshOrLeaveIfStatusChanged(previousStatus);
     }
   }
 
   Future<void> _cancelWorkOrder() async {
+    final previousStatus = _workOrder.status;
     final reason = await _promptReason('Cancel work order');
     if (reason == null || reason.isEmpty) return;
     try {
@@ -913,7 +941,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
-      await _load();
+      await _refreshOrLeaveIfStatusChanged(previousStatus);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
@@ -921,6 +949,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
   }
 
   Future<void> _performWorkOrderAction(String action) async {
+    final previousStatus = _workOrder.status;
     try {
       String feedback = '';
       if (action == 'open_incoming_transfers') {
@@ -932,7 +961,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
           ),
         );
         if (!mounted) return;
-        await _load();
+        await _refreshOrLeaveIfStatusChanged(previousStatus);
         return;
       } else if (action == 'assign_to_engineer') {
         final engineerId = await _promptEngineerId(title: 'Assign to engineer');
@@ -984,7 +1013,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
             ),
           );
           if (updated == true) {
-            await _load();
+            await _refreshOrLeaveIfStatusChanged(previousStatus);
           }
           return;
         }
@@ -995,7 +1024,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
           ),
         );
         if (updated == true) {
-          await _load();
+          await _refreshOrLeaveIfStatusChanged(previousStatus);
         }
         return;
       } else if (action == 'edit_report') {
@@ -1005,7 +1034,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
           ),
         );
         if (updated == true) {
-          await _load();
+          await _refreshOrLeaveIfStatusChanged(previousStatus);
         }
         return;
       } else if (action == 'add_remarks') {
@@ -1015,7 +1044,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
           ),
         );
         if (!mounted) return;
-        await _load();
+        await _refreshOrLeaveIfStatusChanged(previousStatus);
         return;
       } else if (action == 'add_attachment') {
         await _addAttachment();
@@ -1048,7 +1077,7 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(feedback)));
-      await _load();
+      await _refreshOrLeaveIfStatusChanged(previousStatus);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -1080,16 +1109,20 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
           const MapEntry('revoke_to_unassigned', 'Return to public pool'),
         );
       } else if (_hasOfficeAdminRole &&
-          (normalizedStatus == 'signed' ||
-              normalizedStatus == 'signed_edited')) {
-        items.add(const MapEntry('view_report', 'View Report'));
+          (normalizedStatus == 'need_approve' ||
+              normalizedStatus == 'signed')) {
+        if (normalizedStatus != 'need_approve') {
+          items.add(const MapEntry('view_report', 'View Report'));
+        }
         items.add(const MapEntry('edit_report', 'Edit Report'));
-        items.add(const MapEntry('add_remarks', 'Add remarks'));
+        if (normalizedStatus != 'need_approve') {
+          items.add(const MapEntry('add_remarks', 'Add remarks'));
+        }
         items.add(const MapEntry('approve', 'Accept'));
         items.add(const MapEntry('reject', 'Reject'));
       } else if (normalizedStatus == 'approved') {
         items.add(const MapEntry('view_report', 'View Report'));
-        items.add(const MapEntry('send_email', 'Send email'));
+        // items.add(const MapEntry('send_email', 'Send email'));
       }
     }
 

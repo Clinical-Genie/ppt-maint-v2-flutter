@@ -3,6 +3,8 @@ import 'package:maintapp/api/api_controller.dart';
 import 'package:maintapp/common/platform_helper.dart';
 import 'package:maintapp/pages/dashboard_page.dart';
 import 'package:maintapp/pages/email_batch_list_page.dart';
+import 'package:maintapp/pages/email_contact_list_page.dart';
+import 'package:maintapp/pages/email_template_list_page.dart';
 import 'package:maintapp/pages/form_template_choice_group_list_page.dart';
 import 'package:maintapp/pages/login_page.dart';
 import 'package:maintapp/pages/login_sessions_page.dart';
@@ -57,6 +59,8 @@ class MyApp extends StatelessWidget {
           '/create-work-order': (context) => const CreateWorkOrderPage(),
           '/work-orders': (context) => const WorkOrderListPage(),
           '/email-batches': (context) => const EmailBatchListPage(),
+          '/email-templates': (context) => const EmailTemplateListPage(),
+          '/email-contacts': (context) => const EmailContactListPage(),
           '/template-choice-groups': (context) =>
               const FormTemplateChoiceGroupListPage(),
           '/transfer-requests': (context) => const TransferRequestListPage(),
