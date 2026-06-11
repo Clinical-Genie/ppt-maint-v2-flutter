@@ -7,8 +7,10 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:maintapp/common/device_info_controller.dart';
 import 'package:maintapp/common/secure_storage.dart';
+import 'package:maintapp/common/trusted_device_storage.dart';
 import 'package:maintapp/main.dart';
 import 'package:maintapp/model/login_info.dart';
+import 'package:maintapp/model/trusted_device.dart';
 import 'package:maintapp/model/user_info.dart';
 import 'package:maintapp/model/session.dart';
 import 'package:maintapp/model/admin_email_log.dart';
@@ -29,6 +31,7 @@ import 'package:maintapp/model/work_order_source_file.dart';
 import 'package:maintapp/model/transfer_request.dart';
 import 'package:maintapp/state/app_state.dart';
 import 'package:maintapp/state/login_session_controller.dart';
+import 'package:maintapp/services/mobile_app_lock_service.dart';
 
 class Server {
   String host;
@@ -123,6 +126,12 @@ class ApiPaths {
   static String revokeSession(String sessionId) =>
       '/api/auth/sessions/$sessionId/revoke';
   static const String revokeAllSessions = '/api/auth/sessions/revoke-all';
+  static const String trustedDevice = '/api/auth/trusted-device';
+  static const String registerTrustedDevice =
+      '/api/auth/trusted-device/register';
+  static const String replaceTrustedDevice = '/api/auth/trusted-device/replace';
+  static const String revokeTrustedDevice = '/api/auth/trusted-device/revoke';
+  static const String deviceSession = '/api/auth/device-session';
   static const String requestVerifyEmail = '/api/auth/verify-email/request';
   static const String confirmVerifyEmail = '/api/auth/verify-email/confirm';
   static const String users = '/api/users';
@@ -287,6 +296,130 @@ class ApiController {
       output = LoginInfo();
     }
     return output;
+  }
+
+  static Future<TrustedDevice?> getTrustedDevice() async {
+    TrustedDevice? output;
+    TrustedDeviceApiException? failure;
+    await ApiAction.callAPI(
+      'getTrustedDevice',
+      ApiPaths.trustedDevice,
+      const {},
+      const {},
+      'get',
+      (data) {
+        final raw = data['device'];
+        if (raw is Map) {
+          output = TrustedDevice.fromJson(raw);
+        }
+      },
+      (data) {
+        failure = _trustedDeviceException(data);
+      },
+      showError: false,
+    );
+    if (failure != null) throw failure!;
+    return output;
+  }
+
+  static Future<TrustedDeviceRegistration> registerTrustedDevice({
+    required Map<String, String> payload,
+    bool replace = false,
+  }) async {
+    TrustedDeviceRegistration? output;
+    TrustedDeviceApiException? failure;
+    await ApiAction.callAPI(
+      replace ? 'replaceTrustedDevice' : 'registerTrustedDevice',
+      replace ? ApiPaths.replaceTrustedDevice : ApiPaths.registerTrustedDevice,
+      const {},
+      payload,
+      'post',
+      (data) {
+        output = TrustedDeviceRegistration(
+          device: TrustedDevice.fromJson(
+            Map<dynamic, dynamic>.from(data['device'] as Map),
+          ),
+          deviceSecret: '${data['device_secret'] ?? ''}',
+        );
+      },
+      (data) {
+        failure = _trustedDeviceException(data);
+      },
+      showError: false,
+      successStatusCodes: const [201],
+    );
+    if (failure != null) throw failure!;
+    if (output == null || output!.deviceSecret.isEmpty) {
+      throw const TrustedDeviceApiException(
+        code: null,
+        message: 'Invalid trusted-device registration response',
+      );
+    }
+    return output!;
+  }
+
+  static Future<void> revokeTrustedDevice() async {
+    TrustedDeviceApiException? failure;
+    await ApiAction.callAPI(
+      'revokeTrustedDevice',
+      ApiPaths.revokeTrustedDevice,
+      const {},
+      const {},
+      'post',
+      (_) {},
+      (data) {
+        failure = _trustedDeviceException(data);
+      },
+      showError: false,
+    );
+    if (failure != null) throw failure!;
+  }
+
+  static Future<LoginInfo> createTrustedDeviceSession({
+    required String deviceUuid,
+    required String deviceSecret,
+  }) async {
+    LoginInfo? output;
+    TrustedDeviceApiException? failure;
+    await ApiAction.callAPI(
+      'createTrustedDeviceSession',
+      ApiPaths.deviceSession,
+      const {},
+      {'device_uuid': deviceUuid, 'device_secret': deviceSecret},
+      'post',
+      (data) {
+        output = LoginInfo.fromJson(data);
+      },
+      (data) {
+        failure = _trustedDeviceException(data);
+      },
+      requireLogin: false,
+      showError: false,
+    );
+    if (failure != null) throw failure!;
+    if (output == null || output!.accessToken.isEmpty) {
+      throw const TrustedDeviceApiException(
+        code: null,
+        message: 'Unable to unlock with this device',
+      );
+    }
+    return output!;
+  }
+
+  static TrustedDeviceApiException _trustedDeviceException(dynamic data) {
+    final map = data is Map
+        ? Map<String, dynamic>.from(data)
+        : <String, dynamic>{};
+    final rawExisting = map['existing_device'];
+    return TrustedDeviceApiException(
+      code: int.tryParse('${map['code'] ?? ''}'),
+      message: _extractApiErrorMessage(map).isNotEmpty
+          ? _extractApiErrorMessage(map)
+          : 'Trusted-device request failed',
+      existingDevice: rawExisting is Map
+          ? TrustedDevice.fromJson(rawExisting)
+          : null,
+    );
   }
 
   static Future<String> changePassword(
@@ -2305,6 +2438,7 @@ class ApiController {
 
 class ApiAction {
   static bool _sessionExpiredDialogShowing = false;
+  static bool _deviceRevokedHandling = false;
 
   static Map<String, String> _buildHeaders({
     Map<String, String>? customHeaders,
@@ -2467,9 +2601,11 @@ class ApiAction {
           ? Duration(seconds: AppConfig.instance.apiTimeoutLimit)
           : null;
 
+      final sensitive = _isSensitiveAuthPath(subPath);
       log(
-        // "Calling API: $method $url with headers: $headers and body: $postParameters, timeout: ${timeLimit?.inSeconds}s",
-        "Calling API: $method $url and body: $postParameters",
+        sensitive
+            ? "Calling API: $method $url with sensitive body redacted"
+            : "Calling API: $method $url and body: $postParameters",
       );
 
       switch (method.toLowerCase()) {
@@ -2577,7 +2713,9 @@ class ApiAction {
       //     LogController.debug);
 
       log(
-        "$apiNameForLog | URL: $subPath | query: $queryParameters | paramBody: $postParameters responseCode: ${response.statusCode} | body: ${response.body}",
+        sensitive
+            ? "$apiNameForLog | URL: $subPath responseCode: ${response.statusCode} | sensitive response redacted"
+            : "$apiNameForLog | URL: $subPath | query: $queryParameters | paramBody: $postParameters responseCode: ${response.statusCode} | body: ${response.body}",
       );
 
       if (successStatusCodes.contains(response.statusCode)) {
@@ -2605,6 +2743,12 @@ class ApiAction {
             ? Map<String, dynamic>.from(decodedBody)
             : <String, dynamic>{'data': decodedBody};
 
+        if (ApiController._extractApiErrorCode(bodyJSON) == '1030006') {
+          await failAction(bodyJSON);
+          await _handleDeviceRevoked();
+          return false;
+        }
+
         if (showError) {
           final formattedError = ApiController._formatApiErrorSummary(bodyJSON);
           callAPIFail(
@@ -2627,6 +2771,42 @@ class ApiAction {
       await failAction({});
       return false;
     }
+  }
+
+  static bool _isSensitiveAuthPath(String subPath) {
+    return subPath.startsWith('/api/auth/');
+  }
+
+  static Future<void> _handleDeviceRevoked() async {
+    if (_deviceRevokedHandling) return;
+    _deviceRevokedHandling = true;
+    await LoginSessionController.instance.logoutLocally(resetLoginInfo: true);
+    await TrustedDeviceStorage.clearRegistration();
+
+    final navigator = MyApp.navigatorKey.currentState;
+    final context = navigator?.context;
+    if (navigator == null || context == null) {
+      _deviceRevokedHandling = false;
+      return;
+    }
+    // The context comes from the app-level navigator and remains valid while
+    // that navigator is mounted.
+    await showDialog<void>(
+      // ignore: use_build_context_synchronously
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        content: const Text('Device is revoked'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    navigator.pushNamedAndRemoveUntil('/login', (route) => false);
+    _deviceRevokedHandling = false;
   }
 
   static Future<bool> callMultipartAPI(
@@ -2709,13 +2889,20 @@ class ApiAction {
         return true;
       }
 
+      final dynamic decodedBody = response.body.isEmpty
+          ? <String, dynamic>{}
+          : json.decode(response.body);
+      final bodyJSON = decodedBody is Map
+          ? Map<String, dynamic>.from(decodedBody)
+          : <String, dynamic>{'data': decodedBody};
+
+      if (ApiController._extractApiErrorCode(bodyJSON) == '1030006') {
+        await failAction();
+        await _handleDeviceRevoked();
+        return false;
+      }
+
       if (showError) {
-        final dynamic decodedBody = response.body.isEmpty
-            ? <String, dynamic>{}
-            : json.decode(response.body);
-        final bodyJSON = decodedBody is Map
-            ? Map<String, dynamic>.from(decodedBody)
-            : <String, dynamic>{'data': decodedBody};
         final formattedError = ApiController._formatApiErrorSummary(bodyJSON);
 
         callAPIFail(
@@ -2837,9 +3024,11 @@ class ApiAction {
           content: Text(message),
           actions: [
             TextButton(
-              onPressed: () {
+              onPressed: () async {
                 Navigator.of(dialogContext).pop();
-                navigator.pushNamedAndRemoveUntil('/login', (route) => false);
+                final route = await MobileAppLockService.instance
+                    .loggedOutRoute();
+                navigator.pushNamedAndRemoveUntil(route, (route) => false);
               },
               child: const Text('OK'),
             ),

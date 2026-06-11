@@ -1,8 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <application
         android:label="PPT Maint"
         android:name="${applicationName}"
-        android:icon="@mipmap/ppt_main_icon">
+        android:icon="@mipmap/ppt_maint_icon">
         <activity
             android:name=".MainActivity"
             android:exported="true"

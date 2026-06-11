@@ -2,10 +2,13 @@ import 'dart:developer';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:maintapp/api/api_controller.dart';
+import 'package:maintapp/common/platform_helper.dart';
+import 'package:maintapp/common/trusted_device_storage.dart';
 import 'package:maintapp/language/mlang.dart';
 import 'package:maintapp/model/user_info.dart';
-import 'package:maintapp/model/work_order.dart';
 import 'package:maintapp/pages/work_order_detail_page.dart';
+import 'package:maintapp/pages/trusted_device_setup_page.dart';
+import 'package:maintapp/services/post_auth_navigation_service.dart';
 import 'package:maintapp/state/app_state.dart';
 import 'package:maintapp/state/login_session_controller.dart';
 
@@ -13,7 +16,9 @@ import 'package:maintapp/state/login_session_controller.dart';
 ///
 /// It intentionally does not provide "create account" or "forgot password" links.
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  const LoginPage({super.key, this.allowTrustedDeviceUnlock = true});
+
+  final bool allowTrustedDeviceUnlock;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -56,35 +61,18 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  Future<bool> _redirectToActiveWorkingWorkOrder(BuildContext context) async {
-    final currentUser = LoginSessionController.instance.userInfo;
-    if (!_isEngineer(currentUser)) {
-      return false;
-    }
-
+  Future<bool> _redirectToActiveWorkingWorkOrder() async {
     try {
-      final activeWorkOrders = await ApiController.listWorkOrders(
-        user: 'me',
-        status: 'working',
-        pageSize: 1,
-      );
-      if (activeWorkOrders.items.isEmpty) {
-        return false;
-      }
-
-      final WorkOrder activeWorkOrder = activeWorkOrders.items.first;
-      if (activeWorkOrder.ownerUserId.trim().isEmpty ||
-          activeWorkOrder.ownerUserId.trim() != currentUser.id.trim()) {
-        return false;
-      }
-
+      final workOrderId = await PostAuthNavigationService.instance
+          .activeWorkingWorkOrderId();
+      if (workOrderId == null) return false;
       if (!mounted) {
         return false;
       }
 
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (_) => WorkOrderDetailPage(workOrderId: activeWorkOrder.id),
+          builder: (_) => WorkOrderDetailPage(workOrderId: workOrderId),
         ),
       );
       return true;
@@ -118,6 +106,14 @@ class _LoginPageState extends State<LoginPage> {
     // In a real app, replace this with real server-side authentication.
 
     if (LoginSessionController.instance.isLoggedIn()) {
+      if (PlatformHelper.instance.supportsTrustedDeviceUnlock()) {
+        final trustedState = await TrustedDeviceStorage.load();
+        if (!trustedState.isConfigured && mounted) {
+          await Navigator.of(context).push<bool>(
+            MaterialPageRoute(builder: (_) => const TrustedDeviceSetupPage()),
+          );
+        }
+      }
       try {
         AppState.instance.setInstitutions(
           await ApiController.listInstitutions(),
@@ -131,9 +127,10 @@ class _LoginPageState extends State<LoginPage> {
         condition: "After Login",
       );
       if (mounted) {
-        if (await _redirectToActiveWorkingWorkOrder(context)) {
+        if (await _redirectToActiveWorkingWorkOrder()) {
           return;
         }
+        if (!mounted) return;
         Navigator.of(context).pushReplacementNamed('/home');
       }
     } else {
@@ -155,6 +152,35 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _initPage() async {
     try {
       await ApiPaths.loadServerSettings();
+      if (PlatformHelper.instance.supportsTrustedDeviceUnlock()) {
+        final trustedState = await TrustedDeviceStorage.load();
+        if (trustedState.appLocked) {
+          await LoginSessionController.instance.logoutLocally(
+            resetLoginInfo: true,
+          );
+          await MLang.init(() {
+            if (mounted) setState(() {});
+          });
+          if (trustedState.isConfigured &&
+              widget.allowTrustedDeviceUnlock &&
+              mounted) {
+            Navigator.of(context).pushReplacementNamed('/device-unlock');
+          }
+          return;
+        }
+        if (widget.allowTrustedDeviceUnlock && trustedState.isConfigured) {
+          await LoginSessionController.instance.logoutLocally(
+            resetLoginInfo: true,
+          );
+          await MLang.init(() {
+            if (mounted) setState(() {});
+          });
+          if (mounted) {
+            Navigator.of(context).pushReplacementNamed('/device-unlock');
+          }
+          return;
+        }
+      }
       final restored = await LoginSessionController.instance
           .loadSessionFromStorage(fetchUserInfo: true);
       await MLang.init(() {
@@ -172,9 +198,10 @@ class _LoginPageState extends State<LoginPage> {
           } catch (_) {}
         } catch (_) {}
         if (mounted) {
-          if (await _redirectToActiveWorkingWorkOrder(context)) {
+          if (await _redirectToActiveWorkingWorkOrder()) {
             return;
           }
+          if (!mounted) return;
           Navigator.of(context).pushReplacementNamed('/home');
           return;
         }

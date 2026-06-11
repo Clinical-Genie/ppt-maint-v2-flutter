@@ -57,5 +57,7 @@
 	</array>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>This app needs photo library access so you can attach images to work orders.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Use Face ID to unlock the maintenance app on this trusted device.</string>
 </dict>
 </plist>

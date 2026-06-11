@@ -4,6 +4,7 @@ import 'package:maintapp/common/secure_storage.dart';
 import 'package:maintapp/model/login_info.dart';
 import 'package:maintapp/model/user_info.dart';
 import 'package:maintapp/state/app_state.dart';
+import 'package:maintapp/services/mobile_app_lock_service.dart';
 
 // import 'dart:developer';
 
@@ -20,8 +21,10 @@ class LoginSessionController {
 
   void debugCheckLoginInfo({String condition = "Check Login Info"}) {
     log("========== $condition ==========");
-    log(loginInfo.toJson().toString());
-    log(userInfo.toJson().toString());
+    log(
+      'loggedIn=${isLoggedIn()}, tokenExpiry=${loginInfo.expiryDate}, '
+      'username=$username, userId=${userInfo.id}',
+    );
   }
 
   bool isLoggedIn() {
@@ -39,10 +42,19 @@ class LoginSessionController {
   Future<void> loginByUsername(String username, String password) async {
     loginInfo = await ApiController.userLogin(username, password);
     if (isLoggedIn()) {
-      this.username = username;
-      userInfo = await ApiController.getMyUserInfo();
-      await _persistSession();
+      await adoptAuthenticatedSession(loginInfo, username: username);
     }
+  }
+
+  Future<void> adoptAuthenticatedSession(
+    LoginInfo authenticatedLoginInfo, {
+    required String username,
+  }) async {
+    loginInfo = authenticatedLoginInfo;
+    this.username = username;
+    userInfo = await ApiController.getMyUserInfo();
+    await _persistSession();
+    await MobileAppLockService.instance.unlock();
   }
 
   Future<void> refreshTokenIfNeeded() async {

@@ -2,9 +2,17 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:maintapp/api/api_controller.dart';
+import 'package:maintapp/common/platform_helper.dart';
+import 'package:maintapp/common/trusted_device_storage.dart';
+import 'package:maintapp/main.dart';
+import 'package:maintapp/model/trusted_device.dart';
 import 'package:maintapp/model/user_info.dart';
 import 'package:maintapp/pages/shared/app_drawer.dart';
+import 'package:maintapp/pages/trusted_device_setup_page.dart';
+import 'package:maintapp/services/trusted_device_service.dart';
+import 'package:maintapp/services/mobile_app_lock_service.dart';
 import 'package:maintapp/state/login_session_controller.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -19,11 +27,15 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _isChangingPassword = false;
   int _signatureVersion = DateTime.now().millisecondsSinceEpoch;
   int _activeSessionCount = 0;
+  TrustedDeviceLocalState? _trustedDeviceState;
+  TrustedDevice? _trustedDevice;
+  bool _trustedDeviceLoading = false;
 
   @override
   void initState() {
     super.initState();
     _loadSessionCount();
+    _loadTrustedDevice();
   }
 
   Future<void> _refreshProfile() async {
@@ -402,6 +414,169 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
+  Future<void> _loadTrustedDevice() async {
+    if (!PlatformHelper.instance.supportsTrustedDeviceUnlock()) return;
+    setState(() => _trustedDeviceLoading = true);
+    try {
+      final state = await TrustedDeviceService.instance.loadState();
+      TrustedDevice? device;
+      if (LoginSessionController.instance.isLoggedIn()) {
+        try {
+          device = await ApiController.getTrustedDevice();
+        } catch (_) {}
+      }
+      if (mounted) {
+        setState(() {
+          _trustedDeviceState = state;
+          _trustedDevice = device;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _trustedDeviceLoading = false);
+    }
+  }
+
+  Future<String?> _requestSixDigitPin({required String title}) async {
+    final pinController = TextEditingController();
+    final confirmController = TextEditingController();
+    String? error;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: pinController,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                maxLength: 6,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'New 6-digit PIN'),
+              ),
+              TextField(
+                controller: confirmController,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                maxLength: 6,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'Confirm PIN'),
+              ),
+              if (error != null)
+                Text(
+                  error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final pin = pinController.text;
+                if (!RegExp(r'^\d{6}$').hasMatch(pin)) {
+                  setDialogState(() => error = 'Enter a 6-digit PIN.');
+                } else if (pin != confirmController.text) {
+                  setDialogState(() => error = 'PINs do not match.');
+                } else {
+                  Navigator.of(dialogContext).pop(pin);
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    pinController.dispose();
+    confirmController.dispose();
+    return result;
+  }
+
+  Future<void> _changeTrustedDevicePin() async {
+    final pin = await _requestSixDigitPin(title: 'Change local PIN');
+    if (pin == null) return;
+    await TrustedDeviceService.instance.changePin(pin);
+    await _loadTrustedDevice();
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Local PIN changed.')));
+    }
+  }
+
+  Future<void> _toggleBiometrics(bool enabled) async {
+    if (enabled && !await TrustedDeviceService.instance.canUseBiometrics()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Biometrics are not available.')),
+        );
+      }
+      return;
+    }
+    await TrustedDeviceService.instance.setBiometricsEnabled(enabled);
+    await _loadTrustedDevice();
+  }
+
+  Future<void> _lockApp() async {
+    await LoginSessionController.instance.logout();
+    await MobileAppLockService.instance.lock();
+    MyApp.navigatorKey.currentState?.pushNamedAndRemoveUntil(
+      '/device-unlock',
+      (route) => false,
+    );
+  }
+
+  Future<void> _revokeTrustedDevice() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Revoke trusted device?'),
+        content: const Text(
+          'This removes PIN and biometric unlock from this device and logs out.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Revoke and log out'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await TrustedDeviceService.instance.revoke();
+    await LoginSessionController.instance.logoutLocally(resetLoginInfo: true);
+    MyApp.navigatorKey.currentState?.pushNamedAndRemoveUntil(
+      '/login',
+      (route) => false,
+    );
+  }
+
+  Future<void> _setupTrustedDevice() async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const TrustedDeviceSetupPage()),
+    );
+    await _loadTrustedDevice();
+  }
+
+  String _formatTrustedDate(DateTime? value) {
+    if (value == null) return '-';
+    final local = value.toLocal();
+    return '${local.year}-${local.month.toString().padLeft(2, '0')}-'
+        '${local.day.toString().padLeft(2, '0')} '
+        '${local.hour.toString().padLeft(2, '0')}:'
+        '${local.minute.toString().padLeft(2, '0')}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = LoginSessionController.instance;
@@ -565,6 +740,76 @@ class _ProfilePageState extends State<ProfilePage> {
                         ),
                       ],
                     ),
+                    if (PlatformHelper.instance.supportsTrustedDeviceUnlock())
+                      _InfoCard(
+                        title: 'Trusted Device',
+                        width: 460,
+                        children: [
+                          if (_trustedDeviceLoading)
+                            const Center(child: CircularProgressIndicator())
+                          else if (_trustedDeviceState?.isConfigured != true)
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                const Text(
+                                  'Trusted-device unlock is not set up.',
+                                ),
+                                const SizedBox(height: 12),
+                                FilledButton.icon(
+                                  onPressed: _setupTrustedDevice,
+                                  icon: const Icon(Icons.phonelink_lock),
+                                  label: const Text('Set up trusted device'),
+                                ),
+                              ],
+                            )
+                          else ...[
+                            _InfoRow(label: 'Status', value: 'Active locally'),
+                            _InfoRow(
+                              label: 'Device',
+                              value:
+                                  _trustedDevice?.deviceName ?? 'This device',
+                            ),
+                            _InfoRow(
+                              label: 'Registered',
+                              value: _formatTrustedDate(
+                                _trustedDevice?.registeredAt,
+                              ),
+                            ),
+                            _InfoRow(
+                              label: 'Last used',
+                              value: _formatTrustedDate(
+                                _trustedDevice?.lastUsedAt,
+                              ),
+                            ),
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('Biometric unlock'),
+                              value:
+                                  _trustedDeviceState?.biometricsEnabled ??
+                                  false,
+                              onChanged: _toggleBiometrics,
+                            ),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                OutlinedButton(
+                                  onPressed: _changeTrustedDevicePin,
+                                  child: const Text('Change PIN'),
+                                ),
+                                OutlinedButton(
+                                  onPressed: _lockApp,
+                                  child: const Text('Lock app'),
+                                ),
+                                FilledButton(
+                                  onPressed: _revokeTrustedDevice,
+                                  child: const Text('Revoke and log out'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
                   ],
                 ),
               ],

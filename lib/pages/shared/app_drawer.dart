@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:maintapp/main.dart';
 import 'package:maintapp/model/user_info.dart';
 import 'package:maintapp/state/login_session_controller.dart';
+import 'package:maintapp/services/mobile_app_lock_service.dart';
 
 class AppDrawer extends StatelessWidget {
   const AppDrawer({required this.user, super.key});
@@ -209,11 +210,10 @@ class AppDrawer extends StatelessWidget {
                     ),
                   );
                   await session.logout();
-                  MyApp.navigatorKey.currentState?.popUntil(
-                    (route) => route.isFirst,
-                  );
+                  final route = await MobileAppLockService.instance
+                      .loggedOutRoute();
                   MyApp.navigatorKey.currentState?.pushNamedAndRemoveUntil(
-                    '/login',
+                    route,
                     (route) => false,
                   );
                 },

@@ -1114,14 +1114,11 @@ class _WorkOrderDetailPageState extends State<WorkOrderDetailPage> {
         if (normalizedStatus != 'need_approve') {
           items.add(const MapEntry('view_report', 'View Report'));
         }
-        items.add(const MapEntry('edit_report', 'Edit Report'));
-        if (normalizedStatus != 'need_approve') {
-          items.add(const MapEntry('add_remarks', 'Add remarks'));
-        }
         items.add(const MapEntry('approve', 'Accept'));
         items.add(const MapEntry('reject', 'Reject'));
+        items.add(const MapEntry('edit_report', 'Edit Report'));
       } else if (normalizedStatus == 'approved') {
-        items.add(const MapEntry('view_report', 'View Report'));
+        // items.add(const MapEntry('view_report', 'View Report'));
         // items.add(const MapEntry('send_email', 'Send email'));
       }
     }

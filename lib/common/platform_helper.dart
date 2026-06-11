@@ -65,4 +65,9 @@ class PlatformHelper {
         currentPlatform == PlatformName.linux ||
         currentPlatform == PlatformName.web;
   }
+
+  bool supportsTrustedDeviceUnlock() {
+    return currentPlatform == PlatformName.iOS ||
+        currentPlatform == PlatformName.android;
+  }
 }

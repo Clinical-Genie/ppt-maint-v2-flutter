@@ -59,20 +59,24 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
   int _currentOffset = 0;
   String _emailSentFilter = 'not_sent';
   EmailBatchConfig _emailBatchConfig = EmailBatchConfig();
+  bool _emailBatchConfigLoaded = false;
   final Set<String> _selectedEmailWorkOrderIds = {};
 
   @override
   void initState() {
     super.initState();
     _loadUsers();
-    _loadEmailBatchConfig();
     _loadWorkOrders();
   }
 
   Future<void> _loadEmailBatchConfig() async {
+    if (_emailBatchConfigLoaded) return; // Skip if already loaded
     final config = await ApiController.getEmailBatchConfig();
     if (!mounted) return;
-    setState(() => _emailBatchConfig = config);
+    setState(() {
+      _emailBatchConfig = config;
+      _emailBatchConfigLoaded = true;
+    });
   }
 
   @override
@@ -448,13 +452,8 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       ];
     }
     if (_usesEngineerPools && _isOthersWOsPool) {
-      return const [
-        ('all', 'All'),
-        ('picked', 'Picked / Scheduled'),
-        ('working', 'Working'),
-        ('need_sign', 'Need sign'),
-        ('ended', 'Ended'),
-      ];
+      // return const [('all', 'All')];
+      return const [];
     }
     return const [
       ('picked', 'Picked'),
@@ -562,6 +561,10 @@ class _WorkOrderListPageState extends State<WorkOrderListPage> {
       }
       _currentPage = 1;
     });
+    // Lazy load email batch config only when entering email selection mode (and only once)
+    if (value == 'need_send_email' && !_emailBatchConfigLoaded) {
+      _loadEmailBatchConfig();
+    }
     _loadWorkOrders();
   }
 

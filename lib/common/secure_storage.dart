@@ -25,7 +25,6 @@ class SecureStorage {
     }
     String dataStr = await _storage.read(key: group) ?? "";
 
-    log("loadDataFromSecureStorage for group $group: $dataStr");
     try {
       if (dataStr.isNotEmpty) {
         Map<String, dynamic> dataLoaded = json.decode(dataStr);
@@ -35,7 +34,7 @@ class SecureStorage {
         return false;
       }
     } catch (e) {
-      log("load secure storage throw exception: $e");
+      log("Failed to load secure storage group $group: $e");
       return false;
     }
   }
